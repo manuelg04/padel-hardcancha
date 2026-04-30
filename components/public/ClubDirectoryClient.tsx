@@ -1,0 +1,118 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useQuery } from "convex/react";
+import Link from "next/link";
+
+import { api } from "@/convex/_generated/api";
+import { ClubCityFilter } from "./ClubCityFilter";
+import { ClubDirectoryCard } from "./ClubDirectoryCard";
+import { ClubSearch } from "./ClubSearch";
+
+export function ClubDirectoryClient() {
+  const clubs = useQuery(api.clubs.listPublishedClubs, {});
+  const [search, setSearch] = useState("");
+  const [city, setCity] = useState("");
+
+  const cities = useMemo(() => {
+    if (!clubs) return [];
+    return Array.from(new Set(clubs.map((club) => club.city))).sort((a, b) =>
+      a.localeCompare(b, "es"),
+    );
+  }, [clubs]);
+
+  const filteredClubs = useMemo(() => {
+    if (!clubs) return [];
+
+    const term = search.trim().toLowerCase();
+
+    return clubs.filter((club) => {
+      const matchesCity = !city || club.city === city;
+      const matchesSearch =
+        !term ||
+        [club.name, club.city, club.address].some((value) =>
+          value.toLowerCase().includes(term),
+        );
+
+      return matchesCity && matchesSearch;
+    });
+  }, [clubs, city, search]);
+
+  return (
+    <main className="min-h-screen bg-[var(--ink-100)]">
+      <header className="border-b border-[var(--ink-200)] bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+          <Link href="/clubes" className="flex items-center gap-3 font-black">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--court-500)] text-white">
+              ●
+            </span>
+            CanchaBGA Padel
+          </Link>
+          <Link className="btn btn-ghost hidden sm:inline-flex" href="/super-admin/login">
+            Super admin
+          </Link>
+        </div>
+      </header>
+
+      <section className="court-lines text-white">
+        <div className="mx-auto max-w-6xl px-5 py-14 md:py-20">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-white/60">
+            Directorio publico
+          </p>
+          <h1 className="text-display mt-4 max-w-3xl text-5xl font-black leading-[0.95] md:text-7xl">
+            Encuentra tu club de padel
+          </h1>
+          <p className="mt-5 max-w-xl text-lg text-white/72">
+            Reserva facil en clubes de Bucaramanga y Santander.
+          </p>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-5 py-6">
+        <div className="-mt-14 mb-8 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-4 shadow-[var(--shadow-lg)]">
+          <div className="grid gap-3 md:grid-cols-[1fr_260px]">
+            <ClubSearch value={search} onChange={setSearch} />
+            <ClubCityFilter cities={cities} value={city} onChange={setCity} />
+          </div>
+        </div>
+
+        {clubs === undefined ? (
+          <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-8 text-center font-bold text-[var(--ink-500)]">
+            Cargando clubes...
+          </div>
+        ) : clubs.length === 0 ? (
+          <EmptyState
+            title="No hay clubes disponibles por ahora."
+            description="Pronto agregaremos nuevos clubes de padel."
+          />
+        ) : filteredClubs.length === 0 ? (
+          <EmptyState
+            title="No encontramos clubes con esa busqueda."
+            description="Prueba con otra ciudad, nombre o direccion."
+          />
+        ) : (
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {filteredClubs.map((club) => (
+              <ClubDirectoryCard key={club._id} club={club} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function EmptyState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-8 text-center shadow-[var(--shadow-sm)]">
+      <h2 className="text-display text-3xl font-black">{title}</h2>
+      <p className="mx-auto mt-2 max-w-md text-[var(--ink-500)]">{description}</p>
+    </div>
+  );
+}
