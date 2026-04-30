@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { Edit, Eye, EyeOff, Power, RotateCcw } from "lucide-react";
+import { CreditCard, Edit, Eye, EyeOff, Power, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useMutation } from "convex/react";
 
@@ -9,7 +9,12 @@ import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { ClubStatusBadge } from "./ClubStatusBadge";
 
-export type SuperAdminClubRow = Doc<"clubs"> & { activeCourtCount: number };
+export type SuperAdminClubRow = Doc<"clubs"> & {
+  activeCourtCount: number;
+  mercadoPagoCollectorId?: string;
+  mercadoPagoConnectedAt?: number;
+  mercadoPagoLastRefreshAt?: number;
+};
 
 export function ClubTable({ clubs }: { clubs: SuperAdminClubRow[] }) {
   const publishClub = useMutation(api.clubs.superAdminPublishClub);
@@ -30,12 +35,13 @@ export function ClubTable({ clubs }: { clubs: SuperAdminClubRow[] }) {
 
   return (
     <div className="overflow-hidden rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white shadow-[var(--shadow-sm)]">
-      <div className="hidden grid-cols-[72px_1.2fr_0.8fr_110px_1.2fr_230px] gap-3 border-b border-[var(--ink-200)] bg-[var(--ink-50)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--ink-500)] lg:grid">
+      <div className="hidden grid-cols-[72px_1.1fr_0.75fr_90px_1.15fr_1fr_230px] gap-3 border-b border-[var(--ink-200)] bg-[var(--ink-50)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--ink-500)] lg:grid">
         <span>Img</span>
         <span>Club</span>
         <span>Ciudad</span>
         <span>Canchas</span>
         <span>Estado</span>
+        <span>Pagos</span>
         <span>Acciones</span>
       </div>
 
@@ -43,7 +49,7 @@ export function ClubTable({ clubs }: { clubs: SuperAdminClubRow[] }) {
         {clubs.map((club) => (
           <article
             key={club._id}
-            className="grid gap-3 p-4 lg:grid-cols-[72px_1.2fr_0.8fr_110px_1.2fr_230px] lg:items-center"
+            className="grid gap-3 p-4 lg:grid-cols-[72px_1.1fr_0.75fr_90px_1.15fr_1fr_230px] lg:items-center"
           >
             <img
               className="h-16 w-20 rounded-[var(--r-md)] object-cover lg:h-14 lg:w-16"
@@ -68,6 +74,18 @@ export function ClubTable({ clubs }: { clubs: SuperAdminClubRow[] }) {
                 positiveLabel="Reservas"
                 negativeLabel="Sin reservas"
               />
+            </div>
+            <div className="text-sm">
+              <div className="flex items-center gap-2 font-black">
+                <CreditCard size={15} />
+                {paymentStatusLabel(club.mercadoPagoConnectionStatus)}
+              </div>
+              <p className="text-mono mt-1 truncate text-xs text-[var(--ink-500)]">
+                {club.mercadoPagoCollectorId ?? "Sin collector"}
+              </p>
+              <p className="text-xs text-[var(--ink-500)]">
+                {club.onlinePaymentsEnabled ? "Online activo" : "Online inactivo"}
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Link
@@ -121,4 +139,14 @@ export function ClubTable({ clubs }: { clubs: SuperAdminClubRow[] }) {
       </div>
     </div>
   );
+}
+
+function paymentStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    connected: "Conectado",
+    disconnected: "No conectado",
+    expired: "Vencido",
+    error: "Error",
+  };
+  return labels[status ?? "disconnected"] ?? "No conectado";
 }

@@ -334,6 +334,11 @@ button {
   color: var(--status-blocked-fg);
 }
 
+.pill-cancelled {
+  background: var(--status-cancelled-bg);
+  color: var(--status-cancelled-fg);
+}
+
 .court-lines {
   background:
     repeating-linear-gradient(

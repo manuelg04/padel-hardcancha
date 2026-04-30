@@ -6,7 +6,7 @@ import {
   BOGOTA_TIMEZONE,
   calculateBookingValue,
   getLocalDayOfWeek,
-  isActiveBookingStatus,
+  isActiveBooking,
   isSlotAvailableForDuration,
   SLOT_MINUTES,
 } from "../lib/bookingRules";
@@ -21,6 +21,7 @@ import {
 } from "./access";
 import {
   bookingValidator,
+  bookingStatusValidator,
   clubValidator,
   courtValidator,
   paymentMethodValidator,
@@ -39,8 +40,8 @@ const slotValidator = v.object({
   value: v.number(),
   isAvailable: v.boolean(),
   bookingId: v.optional(v.id("bookings")),
-  bookingStatus: v.optional(v.union(v.literal("confirmed"), v.literal("blocked"))),
-  paymentStatus: v.optional(v.union(v.literal("pending"), v.literal("paid"))),
+  bookingStatus: v.optional(bookingStatusValidator),
+  paymentStatus: v.optional(paymentStatusValidator),
   customerName: v.optional(v.string()),
 });
 
@@ -80,12 +81,12 @@ type AvailabilitySlot = {
   value: number;
   isAvailable: boolean;
   bookingId?: Id<"bookings">;
-  bookingStatus?: "confirmed" | "blocked";
-  paymentStatus?: "pending" | "paid";
+  bookingStatus?: Doc<"bookings">["bookingStatus"];
+  paymentStatus?: Doc<"bookings">["paymentStatus"];
   customerName?: string;
 };
 
-async function getClubOrThrow(
+export async function getClubOrThrow(
   ctx: Ctx,
   slug: string,
   options?: { requirePublished?: boolean; requireBookingEnabled?: boolean },
@@ -119,7 +120,7 @@ async function getClubOrThrow(
   return club;
 }
 
-async function getCourtOrThrow(ctx: Ctx, courtId: Id<"courts">) {
+export async function getCourtOrThrow(ctx: Ctx, courtId: Id<"courts">) {
   const court = await ctx.db.get(courtId);
 
   if (!court || !court.isActive) {
@@ -132,7 +133,7 @@ async function getCourtOrThrow(ctx: Ctx, courtId: Id<"courts">) {
   return court;
 }
 
-function getOpeningWindow(club: Doc<"clubs">, localDate: string) {
+export function getOpeningWindow(club: Doc<"clubs">, localDate: string) {
   const day = getLocalDayOfWeek(localDate);
   const hours = club.openingHours.find((entry) => entry.dayOfWeek === day);
 
@@ -158,7 +159,7 @@ async function getActiveCourts(ctx: Ctx, clubId: Id<"clubs">) {
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-async function listBookingsForCourtDate(
+export async function listBookingsForCourtDate(
   ctx: Ctx,
   courtId: Id<"courts">,
   localDate: string,
@@ -188,15 +189,16 @@ function findOverlappingBooking(
   bookings: Doc<"bookings">[],
   startMinutes: number,
   endMinutes: number,
+  now = Date.now(),
 ) {
   return bookings.find(
     (booking) =>
-      isActiveBookingStatus(booking.bookingStatus) &&
+      isActiveBooking(booking, now) &&
       bookingOverlaps(booking, startMinutes, endMinutes),
   );
 }
 
-async function assertCanBook(args: {
+export async function assertCanBook(args: {
   ctx: MutationCtx;
   club: Doc<"clubs">;
   court: Doc<"courts">;
@@ -229,13 +231,14 @@ async function assertCanBook(args: {
   }
 
   const endMinutes = args.startMinutes + args.durationMinutes;
+  const now = Date.now();
   const existing = await listBookingsForCourtDate(
     args.ctx,
     args.court._id,
     args.localDate,
   );
 
-  if (findOverlappingBooking(existing, args.startMinutes, endMinutes)) {
+  if (findOverlappingBooking(existing, args.startMinutes, endMinutes, now)) {
     throw new ConvexError({
       code: "SLOT_TAKEN",
       message: "Este horario ya no está disponible. Elige otro horario.",
@@ -243,7 +246,7 @@ async function assertCanBook(args: {
   }
 }
 
-async function buildBookingCode(ctx: MutationCtx, now: number) {
+export async function buildBookingCode(ctx: MutationCtx, now: number) {
   const base = now % 100000;
 
   for (let offset = 0; offset < 100; offset += 1) {
@@ -264,7 +267,7 @@ async function buildBookingCode(ctx: MutationCtx, now: number) {
   });
 }
 
-async function upsertCustomer(
+export async function upsertCustomer(
   ctx: MutationCtx,
   args: {
     clubId: Id<"clubs">;
@@ -335,6 +338,7 @@ export const getAvailability = query({
     const bookings = await listBookingsForClubDate(ctx, club._id, args.localDate);
     const openingWindow = getOpeningWindow(club, args.localDate);
     const slots: AvailabilitySlot[] = [];
+    const now = Date.now();
 
     if (!openingWindow.isOpen) {
       return { courts, slots, ...openingWindow };
@@ -353,6 +357,7 @@ export const getAvailability = query({
           courtBookings,
           startMinutes,
           endMinutes,
+          now,
         );
 
         slots.push({
@@ -375,12 +380,10 @@ export const getAvailability = query({
               startMinutes,
               args.durationMinutes,
               courtBookings,
+              now,
             ),
           bookingId: overlappingBooking?._id,
-          bookingStatus:
-            overlappingBooking?.bookingStatus === "cancelled"
-              ? undefined
-              : overlappingBooking?.bookingStatus,
+          bookingStatus: overlappingBooking?.bookingStatus,
           paymentStatus: overlappingBooking?.paymentStatus,
           customerName: overlappingBooking?.customerName,
         });
@@ -410,6 +413,12 @@ export const createOnlineBooking = mutation({
       requirePublished: true,
       requireBookingEnabled: true,
     });
+    if (club.onlinePaymentRequired) {
+      throw new ConvexError({
+        code: "ONLINE_PAYMENT_REQUIRED",
+        message: "Este club requiere pago online para reservas web.",
+      });
+    }
     const court = await getCourtOrThrow(ctx, args.courtId);
     await assertCanBook({ ctx, club, court, ...args });
 
@@ -449,7 +458,7 @@ export const createOnlineBooking = mutation({
       customerEmail: customerEmail?.trim() || undefined,
       source: "online",
       paymentMethod: args.paymentMethod,
-      paymentStatus: "pending",
+      paymentStatus: value > 0 ? "pending" : "no_payment_required",
       bookingStatus: "confirmed",
       value,
       createdAt: now,
@@ -548,7 +557,11 @@ export const listAgendaByDate = query({
     const courts = await getActiveCourts(ctx, club._id);
     const bookings = (
       await listBookingsForClubDate(ctx, club._id, args.localDate)
-    ).filter((booking) => booking.bookingStatus !== "cancelled");
+    ).filter(
+      (booking) =>
+        booking.bookingStatus !== "cancelled" &&
+        booking.bookingStatus !== "expired",
+    );
     const openingWindow = getOpeningWindow(club, args.localDate);
     const visibleBookings = bookings.sort((a, b) => {
       if (a.startMinutes !== b.startMinutes) {
@@ -715,8 +728,19 @@ export const markBookingPaid = mutation({
       return null;
     }
 
+    if (booking.paymentProvider === "mercadopago") {
+      throw new ConvexError({
+        code: "MERCADOPAGO_WEBHOOK_REQUIRED",
+        message: "Los pagos de Mercado Pago se confirman con el webhook.",
+      });
+    }
+
     await ctx.db.patch(args.bookingId, {
       paymentStatus: "paid",
+      bookingStatus:
+        booking.bookingStatus === "payment_pending"
+          ? "confirmed"
+          : booking.bookingStatus,
       paidAt: Date.now(),
       updatedAt: Date.now(),
     });

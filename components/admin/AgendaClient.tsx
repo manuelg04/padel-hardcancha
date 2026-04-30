@@ -3,12 +3,15 @@
 import {
   Check,
   CircleDollarSign,
+  Copy,
+  CreditCard,
   MessageCircle,
   Plus,
+  RotateCcw,
   Search,
   X,
 } from "lucide-react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
@@ -23,11 +26,16 @@ import {
   todayBogota,
 } from "@/lib/dates";
 import { formatCOP, initials } from "@/lib/format";
-import { whatsappUrl } from "@/lib/whatsapp";
+import { paymentLinkMessage, whatsappUrl } from "@/lib/whatsapp";
 import { AdminLayout } from "./AdminLayout";
 
 type BookingDoc = Doc<"bookings">;
 type CourtDoc = Doc<"courts">;
+type PaymentStatus = {
+  onlinePaymentsEnabled: boolean;
+  status: string;
+  canManageConnection: boolean;
+} | null | undefined;
 type BookingFilter = "all" | "pending" | "paid" | "blocked";
 type ModalDefaults = {
   courtId?: Id<"courts">;
@@ -46,6 +54,7 @@ export function AgendaClient() {
   const agenda = useQuery(api.bookings.listAgendaByDate, {
     localDate,
   });
+  const mercadoPagoStatus = useQuery(api.payments.getClubMercadoPagoStatus, {});
 
   const visibleBookingIds = useMemo(() => {
     if (!agenda) return new Set<string>();
@@ -182,6 +191,8 @@ export function AgendaClient() {
                 defaults={modalDefaults}
                 courts={agenda.courts}
                 pricing={agenda.club.pricing}
+                clubName={agenda.club.name}
+                mercadoPagoStatus={mercadoPagoStatus}
                 onClose={() => setModalDefaults(null)}
               />
             ) : null}
@@ -192,6 +203,7 @@ export function AgendaClient() {
                 booking={selectedBooking}
                 court={agenda.courts.find((court) => court._id === selectedBooking.courtId)}
                 clubName={agenda.club.name}
+                mercadoPagoStatus={mercadoPagoStatus}
                 onClose={() => setSelectedBookingId(null)}
               />
             ) : null}
@@ -352,14 +364,19 @@ function ManualBookingModal({
   defaults,
   courts,
   pricing,
+  clubName,
+  mercadoPagoStatus,
   onClose,
 }: {
   defaults: ModalDefaults;
   courts: CourtDoc[];
   pricing: Doc<"clubs">["pricing"];
+  clubName: string;
+  mercadoPagoStatus: PaymentStatus;
   onClose: () => void;
 }) {
   const createManualBooking = useMutation(api.bookings.createManualBooking);
+  const createPaymentLink = useAction(api.payments.createManualBookingPaymentLink);
   const [courtId, setCourtId] = useState(defaults.courtId ?? courts[0]?._id);
   const [localDate, setLocalDate] = useState(defaults.localDate);
   const [startMinutes, setStartMinutes] = useState(defaults.startMinutes ?? 17 * 60);
@@ -370,6 +387,11 @@ function ManualBookingModal({
   const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid">("pending");
   const [source, setSource] = useState<"manual" | "whatsapp" | "walk_in" | "phone">("whatsapp");
   const [internalNote, setInternalNote] = useState("");
+  const [generatePaymentLink, setGeneratePaymentLink] = useState(false);
+  const [generatedPayment, setGeneratedPayment] = useState<{
+    checkoutUrl: string;
+    bookingCode: string;
+  } | null>(null);
   const [error, setError] = useState("");
   const value = calculateBookingValue(
     localDate,
@@ -377,6 +399,10 @@ function ManualBookingModal({
     durationMinutes,
     pricing,
   );
+  const selectedCourt = courts.find((court) => court._id === courtId);
+  const canGeneratePaymentLink =
+    mercadoPagoStatus?.onlinePaymentsEnabled &&
+    mercadoPagoStatus.status === "connected";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -388,6 +414,30 @@ function ManualBookingModal({
     }
 
     try {
+      if (generatePaymentLink) {
+        if (!canGeneratePaymentLink) {
+          setError("Conecta y activa Mercado Pago antes de generar el link.");
+          return;
+        }
+
+        const payment = await createPaymentLink({
+          courtId,
+          localDate,
+          startMinutes,
+          durationMinutes,
+          customerName,
+          customerPhone,
+          customerEmail: customerEmail || undefined,
+          source,
+          internalNote: internalNote || undefined,
+        });
+        setGeneratedPayment({
+          checkoutUrl: payment.checkoutUrl,
+          bookingCode: payment.bookingCode,
+        });
+        return;
+      }
+
       await createManualBooking({
         courtId,
         localDate,
@@ -429,7 +479,50 @@ function ManualBookingModal({
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        {generatedPayment ? (
+          <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4">
+            <p className="text-lg font-black">Link de pago listo</p>
+            <p className="mt-1 text-sm text-[var(--ink-500)]">
+              Reserva {generatedPayment.bookingCode}. Puedes copiarlo o enviarlo por
+              WhatsApp.
+            </p>
+            <div className="mt-4 grid gap-2">
+              <button
+                className="btn btn-ghost btn-block"
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(generatedPayment.checkoutUrl)}
+              >
+                <Copy size={17} />
+                Copiar link
+              </button>
+              <a
+                className="btn btn-primary btn-block"
+                href={whatsappUrl(
+                  customerPhone,
+                  paymentLinkMessage({
+                    clubName,
+                    customerName,
+                    code: generatedPayment.bookingCode,
+                    date: formatDateLong(localDate),
+                    hour: minutesToRange(startMinutes, startMinutes + durationMinutes),
+                    court: selectedCourt?.name ?? "Cancha",
+                    value,
+                    checkoutUrl: generatedPayment.checkoutUrl,
+                  }),
+                )}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageCircle size={17} />
+                Enviar por WhatsApp
+              </a>
+              <button className="btn btn-ghost btn-block" type="button" onClick={onClose}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
           <div className="field">
             <label>Cancha</label>
             <select
@@ -534,7 +627,23 @@ function ManualBookingModal({
               onChange={(event) => setInternalNote(event.target.value)}
             />
           </div>
+          {canGeneratePaymentLink ? (
+            <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] p-4 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={generatePaymentLink}
+                onChange={(event) => setGeneratePaymentLink(event.target.checked)}
+              />
+              <span>
+                <span className="block font-black">Generar link Mercado Pago</span>
+                <span className="text-sm text-[var(--ink-500)]">
+                  La reserva queda confirmada y el pago queda pendiente.
+                </span>
+              </span>
+            </label>
+          ) : null}
         </div>
+        )}
 
         {error ? (
           <p className="mt-4 rounded-[var(--r-md)] bg-[var(--status-cancelled-bg)] p-3 text-sm font-bold text-[var(--status-cancelled-fg)]">
@@ -542,15 +651,17 @@ function ManualBookingModal({
           </p>
         ) : null}
 
-        <div className="mt-5 flex justify-end gap-2">
+        {!generatedPayment ? (
+          <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancelar
           </button>
           <button type="submit" className="btn btn-primary">
-            <Check size={17} />
-            Crear reserva
+            {generatePaymentLink ? <CreditCard size={17} /> : <Check size={17} />}
+            {generatePaymentLink ? "Crear y generar link" : "Crear reserva"}
           </button>
         </div>
+        ) : null}
       </form>
     </div>
   );
@@ -560,18 +671,30 @@ function BookingDetailDrawer({
   booking,
   court,
   clubName,
+  mercadoPagoStatus,
   onClose,
 }: {
   booking: BookingDoc;
   court?: CourtDoc;
   clubName: string;
+  mercadoPagoStatus: PaymentStatus;
   onClose: () => void;
 }) {
   const markPaid = useMutation(api.bookings.markBookingPaid);
   const cancelBooking = useMutation(api.bookings.cancelBooking);
   const updateNote = useMutation(api.bookings.updateBookingNote);
+  const payment = useQuery(api.payments.getBookingPaymentDetails, {
+    bookingId: booking._id,
+  });
+  const retryPayment = useAction(api.payments.retryBookingPayment);
   const [note, setNote] = useState(booking.internalNote ?? "");
+  const [freshPaymentLink, setFreshPaymentLink] = useState("");
   const [error, setError] = useState("");
+  const checkoutUrl =
+    freshPaymentLink || payment?.checkoutUrl || booking.paymentCheckoutUrl || "";
+  const canGeneratePaymentLink =
+    mercadoPagoStatus?.onlinePaymentsEnabled &&
+    mercadoPagoStatus.status === "connected";
 
   async function runAction(action: () => Promise<unknown>) {
     setError("");
@@ -582,6 +705,18 @@ function BookingDetailDrawer({
         actionError instanceof Error ? actionError.message : "No pudimos actualizar.",
       );
     }
+  }
+
+  async function regeneratePaymentLink() {
+    if (!canGeneratePaymentLink) {
+      setError("Conecta y activa Mercado Pago antes de generar links de pago.");
+      return;
+    }
+
+    await runAction(async () => {
+      const result = await retryPayment({ bookingId: booking._id });
+      setFreshPaymentLink(result.checkoutUrl);
+    });
   }
 
   return (
@@ -627,16 +762,67 @@ function BookingDetailDrawer({
           />
           <Detail label="Valor" value={formatCOP(booking.value)} />
           <Detail label="Origen" value={sourceLabel(booking.source)} />
+          <Detail label="Reserva" value={bookingStatusLabel(booking.bookingStatus)} />
+          <Detail label="Pago" value={paymentStatusLabel(booking.paymentStatus)} />
+          <Detail
+            label="Proveedor"
+            value={booking.paymentProvider === "mercadopago" ? "Mercado Pago" : "Manual"}
+          />
+          <Detail
+            label="ID Mercado Pago"
+            value={payment?.providerPaymentId ?? "No disponible"}
+          />
+          <Detail
+            label="Fecha de pago"
+            value={booking.paidAt ? formatDateTime(booking.paidAt) : "No disponible"}
+          />
           <Detail
             label="Creada"
-            value={new Intl.DateTimeFormat("es-CO", {
-              day: "numeric",
-              month: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            }).format(new Date(booking.createdAt))}
+            value={formatDateTime(booking.createdAt)}
           />
         </div>
+
+        {checkoutUrl ? (
+          <div className="mt-4 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4">
+            <p className="text-sm font-black">Link de pago</p>
+            <p className="text-mono mt-1 truncate text-xs text-[var(--ink-500)]">
+              {checkoutUrl}
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(checkoutUrl)}
+              >
+                <Copy size={16} />
+                Copiar
+              </button>
+              {booking.customerPhone ? (
+                <a
+                  className="btn btn-ghost"
+                  href={whatsappUrl(
+                    booking.customerPhone,
+                    paymentLinkMessage({
+                      clubName,
+                      customerName: booking.customerName ?? "",
+                      code: booking.code,
+                      date: formatDateLong(booking.localDate),
+                      hour: minutesToRange(booking.startMinutes, booking.endMinutes),
+                      court: court?.name ?? "Cancha",
+                      value: booking.value,
+                      checkoutUrl,
+                    }),
+                  )}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={16} />
+                  Enviar
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <div className="field mt-5">
           <label>Nota interna</label>
@@ -653,11 +839,25 @@ function BookingDetailDrawer({
           {booking.bookingStatus !== "blocked" ? (
             <button
               className="btn btn-primary btn-block"
-              disabled={booking.paymentStatus === "paid"}
+              disabled={
+                booking.paymentStatus === "paid" ||
+                booking.paymentProvider === "mercadopago"
+              }
               onClick={() => runAction(() => markPaid({ bookingId: booking._id }))}
             >
               <CircleDollarSign size={17} />
               Marcar pagada
+            </button>
+          ) : null}
+          {canGeneratePaymentLink &&
+          booking.bookingStatus !== "blocked" &&
+          booking.paymentStatus !== "paid" ? (
+            <button
+              className="btn btn-ghost btn-block"
+              onClick={() => void regeneratePaymentLink()}
+            >
+              <RotateCcw size={17} />
+              {checkoutUrl ? "Reintentar pago" : "Generar link de pago"}
             </button>
           ) : null}
           <button
@@ -742,6 +942,38 @@ function sourceLabel(source: BookingDoc["source"]) {
     phone: "Telefono",
   };
   return labels[source];
+}
+
+function bookingStatusLabel(status: BookingDoc["bookingStatus"]) {
+  const labels: Record<BookingDoc["bookingStatus"], string> = {
+    payment_pending: "Pendiente de pago",
+    confirmed: "Confirmada",
+    cancelled: "Cancelada",
+    expired: "Expirada",
+    blocked: "Bloqueada",
+  };
+  return labels[status];
+}
+
+function paymentStatusLabel(status: BookingDoc["paymentStatus"]) {
+  const labels: Record<BookingDoc["paymentStatus"], string> = {
+    pending: "Pendiente",
+    paid: "Pagada",
+    failed: "Fallida",
+    expired: "Vencida",
+    refunded: "Reembolsada",
+    no_payment_required: "No requiere pago",
+  };
+  return labels[status];
+}
+
+function formatDateTime(value: number) {
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function bookingMatchesFilter(

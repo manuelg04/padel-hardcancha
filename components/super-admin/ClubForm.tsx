@@ -32,6 +32,10 @@ export type ClubFormValues = {
   isPublished: boolean;
   isFeatured: boolean;
   bookingEnabled: boolean;
+  onlinePaymentsEnabled: boolean;
+  onlinePaymentRequired: boolean;
+  paymentHoldMinutes: number;
+  allowOfflineMercadoPagoMethods: boolean;
   masterName: string;
   masterEmail: string;
   masterPhone: string;
@@ -68,6 +72,10 @@ const defaults: ClubFormValues = {
   isPublished: false,
   isFeatured: false,
   bookingEnabled: true,
+  onlinePaymentsEnabled: false,
+  onlinePaymentRequired: false,
+  paymentHoldMinutes: 15,
+  allowOfflineMercadoPagoMethods: false,
   masterName: "",
   masterEmail: "",
   masterPhone: "",
@@ -108,6 +116,10 @@ function clubToValues(
     isPublished: club.isPublished,
     isFeatured: club.isFeatured,
     bookingEnabled: club.bookingEnabled,
+    onlinePaymentsEnabled: club.onlinePaymentsEnabled ?? false,
+    onlinePaymentRequired: club.onlinePaymentRequired ?? false,
+    paymentHoldMinutes: club.paymentHoldMinutes ?? 15,
+    allowOfflineMercadoPagoMethods: club.allowOfflineMercadoPagoMethods ?? false,
     masterName: master?.name ?? "",
     masterEmail: master?.email ?? "",
     masterPhone: master?.phone ?? "",
@@ -143,6 +155,9 @@ function validate(values: ClubFormValues) {
   }
   if (values.peakStartMinutes >= values.peakEndMinutes) {
     return "La hora pico inicial debe ser menor que la hora final.";
+  }
+  if (values.paymentHoldMinutes < 5 || values.paymentHoldMinutes > 60) {
+    return "El tiempo de pago debe estar entre 5 y 60 minutos.";
   }
   if (!isValidOptionalUrl(values.coverImageUrl)) {
     return "La imagen principal debe ser una URL valida.";
@@ -414,6 +429,36 @@ export function ClubForm({
             onChange={(checked) => setField("bookingEnabled", checked)}
           />
         </div>
+      </Section>
+
+      <Section title="Pagos online">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Switch
+            label="Pagos online activos"
+            checked={values.onlinePaymentsEnabled}
+            onChange={(checked) => setField("onlinePaymentsEnabled", checked)}
+          />
+          <Switch
+            label="Pago online obligatorio"
+            checked={values.onlinePaymentRequired}
+            onChange={(checked) => setField("onlinePaymentRequired", checked)}
+          />
+          <Switch
+            label="Permitir medios offline Mercado Pago"
+            checked={values.allowOfflineMercadoPagoMethods}
+            onChange={(checked) =>
+              setField("allowOfflineMercadoPagoMethods", checked)
+            }
+          />
+          <NumberField
+            label="Minutos para pagar"
+            value={values.paymentHoldMinutes}
+            onChange={(value) => setField("paymentHoldMinutes", value)}
+          />
+        </div>
+        <p className="mt-3 text-sm text-[var(--ink-500)]">
+          El super admin no ve tokens. La cuenta Mercado Pago la conecta el club.
+        </p>
       </Section>
 
       <Section title="Usuario maestro del club">

@@ -234,6 +234,11 @@ async function upsertClub(ctx: MutationCtx, seed: ClubSeed) {
     isPublished: seed.isPublished,
     isFeatured: seed.isFeatured,
     bookingEnabled: seed.bookingEnabled,
+    onlinePaymentsEnabled: false,
+    onlinePaymentRequired: false,
+    paymentHoldMinutes: 15,
+    mercadoPagoConnectionStatus: "disconnected" as const,
+    allowOfflineMercadoPagoMethods: false,
     updatedAt: now,
   };
 

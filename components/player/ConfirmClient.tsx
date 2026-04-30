@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, CreditCard } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -30,7 +30,9 @@ export function ConfirmClient({
   const [name, setName] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"club" | "transfer">("club");
+  const [paymentMethod, setPaymentMethod] = useState<
+    "mercadopago" | "club" | "transfer"
+  >("club");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const currentUser = useQuery(
@@ -48,7 +50,12 @@ export function ConfirmClient({
         }
       : "skip",
   );
+  const paymentOptions = useQuery(
+    api.payments.getClubMercadoPagoPublicStatus,
+    isAuthenticated ? { clubSlug: slug } : "skip",
+  );
   const createBooking = useMutation(api.bookings.createOnlineBooking);
+  const createCheckout = useAction(api.payments.createOnlineBookingCheckout);
 
   const selectedSlot = useMemo(
     () =>
@@ -65,6 +72,17 @@ export function ConfirmClient({
     !effectiveEmail || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(effectiveEmail);
   const phoneValid = onlyDigits(effectivePhone).length >= 10;
   const formValid = effectiveName.trim().length > 2 && phoneValid && emailValid;
+  const mercadoPagoAvailable =
+    paymentOptions?.onlinePaymentsEnabled && paymentOptions.connected;
+  const offlineAllowed = !paymentOptions?.onlinePaymentRequired;
+  const selectedPaymentMethod = paymentOptions?.onlinePaymentRequired
+    ? "mercadopago"
+    : paymentMethod;
+  const canSubmit =
+    formValid &&
+    (selectedPaymentMethod === "mercadopago"
+      ? Boolean(mercadoPagoAvailable)
+      : offlineAllowed);
 
   async function submitBooking(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -77,6 +95,21 @@ export function ConfirmClient({
 
     try {
       setIsSubmitting(true);
+      if (selectedPaymentMethod === "mercadopago") {
+        const result = await createCheckout({
+          clubSlug: slug,
+          courtId: courtId as Id<"courts">,
+          localDate,
+          startMinutes,
+          durationMinutes,
+          customerName: effectiveName,
+          customerPhone: effectivePhone,
+          customerEmail: effectiveEmail || undefined,
+        });
+        window.location.assign(result.checkoutUrl);
+        return;
+      }
+
       const result = await createBooking({
         clubSlug: slug,
         courtId: courtId as Id<"courts">,
@@ -86,7 +119,7 @@ export function ConfirmClient({
         customerName: effectiveName,
         customerPhone: effectivePhone,
         customerEmail: effectiveEmail || undefined,
-        paymentMethod,
+        paymentMethod: selectedPaymentMethod,
       });
       router.push(`/club/${slug}/reserva/${result.code}`);
     } catch (bookingError) {
@@ -100,7 +133,13 @@ export function ConfirmClient({
     }
   }
 
-  if (isLoading || !isAuthenticated || club === undefined || availability === undefined) {
+  if (
+    isLoading ||
+    !isAuthenticated ||
+    club === undefined ||
+    availability === undefined ||
+    paymentOptions === undefined
+  ) {
     return <PlayerShell>Loading reservation...</PlayerShell>;
   }
 
@@ -177,25 +216,51 @@ export function ConfirmClient({
             <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-[var(--ink-500)]">
               Método de pago
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2">
               {[
-                ["club", "Pago en club"],
-                ["transfer", "Transferencia"],
-              ].map(([value, label]) => (
+                ...(mercadoPagoAvailable
+                  ? [
+                      [
+                        "mercadopago",
+                        "Mercado Pago",
+                        "Paga online. El dinero llega directamente al club.",
+                      ],
+                    ]
+                  : []),
+                ...(offlineAllowed
+                  ? [
+                      ["club", "Pago en club", "Paga en recepcion al llegar."],
+                      ["transfer", "Transferencia", "Coordina el soporte con el club."],
+                    ]
+                  : []),
+              ].map(([value, label, description]) => (
                 <button
                   key={value}
                   type="button"
-                  className={`rounded-[var(--r-md)] border px-3 py-3 text-sm font-black ${
-                    paymentMethod === value
+                  className={`flex items-center gap-3 rounded-[var(--r-md)] border px-3 py-3 text-left text-sm font-black ${
+                    selectedPaymentMethod === value
                       ? "border-[var(--court-500)] bg-[var(--court-50)] text-[var(--court-700)]"
                       : "border-[var(--ink-200)] bg-white"
                   }`}
-                  onClick={() => setPaymentMethod(value as "club" | "transfer")}
+                  onClick={() =>
+                    setPaymentMethod(value as "mercadopago" | "club" | "transfer")
+                  }
                 >
-                  {label}
+                  {value === "mercadopago" ? <CreditCard size={18} /> : null}
+                  <span>
+                    <span className="block">{label}</span>
+                    <span className="block text-xs font-bold opacity-70">
+                      {description}
+                    </span>
+                  </span>
                 </button>
               ))}
             </div>
+            {paymentOptions.onlinePaymentRequired && !mercadoPagoAvailable ? (
+              <p className="mt-2 rounded-[var(--r-md)] bg-[var(--status-cancelled-bg)] p-3 text-sm font-bold text-[var(--status-cancelled-fg)]">
+                Este club requiere pago online, pero Mercado Pago no esta conectado.
+              </p>
+            ) : null}
           </div>
 
           <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4">
@@ -220,10 +285,16 @@ export function ConfirmClient({
           <button
             type="submit"
             className="btn btn-primary btn-block"
-            disabled={!formValid || isSubmitting}
+            disabled={!canSubmit || isSubmitting}
           >
             <Check size={17} />
-            {isSubmitting ? "Confirmando..." : "Confirmar reserva"}
+            {isSubmitting
+              ? selectedPaymentMethod === "mercadopago"
+                ? "Preparando pago..."
+                : "Confirmando..."
+              : selectedPaymentMethod === "mercadopago"
+                ? "Ir a pagar"
+                : "Confirmar reserva"}
           </button>
         </form>
       </div>

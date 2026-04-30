@@ -45,6 +45,18 @@ describe("availability rules", () => {
     { startMinutes: 18 * 60, endMinutes: 19 * 60, bookingStatus: "confirmed" },
     { startMinutes: 20 * 60, endMinutes: 22 * 60, bookingStatus: "blocked" },
     { startMinutes: 7 * 60, endMinutes: 8 * 60, bookingStatus: "cancelled" },
+    {
+      startMinutes: 9 * 60,
+      endMinutes: 10 * 60,
+      bookingStatus: "payment_pending",
+      paymentExpiresAt: 1_800,
+    },
+    {
+      startMinutes: 10 * 60,
+      endMinutes: 11 * 60,
+      bookingStatus: "payment_pending",
+      paymentExpiresAt: 900,
+    },
   ] as const;
 
   it("detects overlaps with confirmed and blocked bookings", () => {
@@ -63,6 +75,15 @@ describe("availability rules", () => {
       false,
     );
     expect(isSlotAvailableForDuration(8 * 60, 120, activeBookings)).toBe(true);
+  });
+
+  it("blocks active payment holds and releases expired payment holds", () => {
+    expect(isSlotAvailableForDuration(9 * 60, 60, activeBookings, 1_000)).toBe(
+      false,
+    );
+    expect(isSlotAvailableForDuration(10 * 60, 60, activeBookings, 1_000)).toBe(
+      true,
+    );
   });
 });
 

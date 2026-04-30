@@ -18,6 +18,24 @@ npx convex dev
 npx convex run seed:seedDemoData
 ```
 
+Mercado Pago development also needs server-only variables in `.env.local`:
+
+```bash
+MERCADOPAGO_APP_ID=
+MERCADOPAGO_CLIENT_ID=
+MERCADOPAGO_CLIENT_SECRET=
+MERCADOPAGO_PUBLIC_KEY=
+MERCADOPAGO_ENV=sandbox
+APP_BASE_URL=http://localhost:3000
+MP_TOKEN_ENCRYPTION_KEY=
+MERCADOPAGO_WEBHOOK_SECRET=
+```
+
+`MP_TOKEN_ENCRYPTION_KEY` must be a private random value. Mercado Pago seller
+tokens are encrypted before being stored in Convex.
+`MERCADOPAGO_WEBHOOK_SECRET` is the secret signature generated in Mercado Pago
+Webhooks settings and is used to verify incoming payment notifications.
+
 ## Auth Bootstrap
 
 Authentication uses Convex Auth with email/password.

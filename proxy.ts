@@ -21,20 +21,26 @@ function loginRoute(pathname: string) {
   return "/login";
 }
 
-const authProxy = convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
-  const isProtected =
-    isAdminRoute(request) || isSuperAdminRoute(request) || isPlayerRoute(request);
+const authProxy = convexAuthNextjsMiddleware(
+  async (request, { convexAuth }) => {
+    const isProtected =
+      isAdminRoute(request) || isSuperAdminRoute(request) || isPlayerRoute(request);
 
-  if (!isProtected || (await convexAuth.isAuthenticated())) {
-    return;
-  }
+    if (!isProtected || (await convexAuth.isAuthenticated())) {
+      return;
+    }
 
-  const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-  return nextjsMiddlewareRedirect(
-    request,
-    `${loginRoute(request.nextUrl.pathname)}?next=${encodeURIComponent(next)}`,
-  );
-});
+    const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+    return nextjsMiddlewareRedirect(
+      request,
+      `${loginRoute(request.nextUrl.pathname)}?next=${encodeURIComponent(next)}`,
+    );
+  },
+  {
+    shouldHandleCode: (request) =>
+      !request.nextUrl.pathname.startsWith("/api/mercadopago/oauth/callback"),
+  },
+);
 
 export function proxy(request: Parameters<typeof authProxy>[0], event: Parameters<typeof authProxy>[1]) {
   return authProxy(request, event);

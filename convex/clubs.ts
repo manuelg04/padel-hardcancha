@@ -279,10 +279,22 @@ export const superAdminListClubs = query({
     await requireSuperAdmin(ctx);
     const clubs = await ctx.db.query("clubs").collect();
     const result = await Promise.all(
-      clubs.map(async (club) => ({
-        ...club,
-        activeCourtCount: await countActiveCourts(ctx, club._id),
-      })),
+      clubs.map(async (club) => {
+        const connection = await ctx.db
+          .query("mercadoPagoConnections")
+          .withIndex("by_club", (q) => q.eq("clubId", club._id))
+          .unique();
+
+        return {
+          ...club,
+          mercadoPagoConnectionStatus:
+            connection?.status ?? club.mercadoPagoConnectionStatus,
+          mercadoPagoCollectorId: connection?.collectorId,
+          mercadoPagoConnectedAt: connection?.connectedAt,
+          mercadoPagoLastRefreshAt: connection?.lastRefreshAt,
+          activeCourtCount: await countActiveCourts(ctx, club._id),
+        };
+      }),
     );
 
     return result.sort((a, b) => a.name.localeCompare(b.name, "es"));
@@ -354,6 +366,10 @@ export const superAdminCreateClub = mutation({
     isPublished: v.optional(v.boolean()),
     isFeatured: v.optional(v.boolean()),
     bookingEnabled: v.optional(v.boolean()),
+    onlinePaymentsEnabled: v.optional(v.boolean()),
+    onlinePaymentRequired: v.optional(v.boolean()),
+    paymentHoldMinutes: v.optional(v.number()),
+    allowOfflineMercadoPagoMethods: v.optional(v.boolean()),
     openingHours: v.optional(v.array(openingHourValidator)),
     pricing: v.optional(pricingValidator),
   },
@@ -397,6 +413,11 @@ export const superAdminCreateClub = mutation({
       isPublished: args.isPublished ?? false,
       isFeatured: args.isFeatured ?? false,
       bookingEnabled: args.bookingEnabled ?? true,
+      onlinePaymentsEnabled: args.onlinePaymentsEnabled ?? false,
+      onlinePaymentRequired: args.onlinePaymentRequired ?? false,
+      paymentHoldMinutes: args.paymentHoldMinutes ?? 15,
+      mercadoPagoConnectionStatus: "disconnected",
+      allowOfflineMercadoPagoMethods: args.allowOfflineMercadoPagoMethods ?? false,
       createdAt: now,
       updatedAt: now,
     });
@@ -427,6 +448,10 @@ export const superAdminUpdateClub = mutation({
     isPublished: v.optional(v.boolean()),
     isFeatured: v.optional(v.boolean()),
     bookingEnabled: v.optional(v.boolean()),
+    onlinePaymentsEnabled: v.optional(v.boolean()),
+    onlinePaymentRequired: v.optional(v.boolean()),
+    paymentHoldMinutes: v.optional(v.number()),
+    allowOfflineMercadoPagoMethods: v.optional(v.boolean()),
     openingHours: v.optional(v.array(openingHourValidator)),
   },
   returns: v.null(),
@@ -490,6 +515,24 @@ export const superAdminUpdateClub = mutation({
     if (args.isFeatured !== undefined) updates.isFeatured = args.isFeatured;
     if (args.bookingEnabled !== undefined) {
       updates.bookingEnabled = args.bookingEnabled;
+    }
+    if (args.onlinePaymentsEnabled !== undefined) {
+      updates.onlinePaymentsEnabled = args.onlinePaymentsEnabled;
+    }
+    if (args.onlinePaymentRequired !== undefined) {
+      updates.onlinePaymentRequired = args.onlinePaymentRequired;
+    }
+    if (args.paymentHoldMinutes !== undefined) {
+      if (args.paymentHoldMinutes < 5 || args.paymentHoldMinutes > 60) {
+        throw new ConvexError({
+          code: "VALIDATION_ERROR",
+          message: "El tiempo de pago debe estar entre 5 y 60 minutos.",
+        });
+      }
+      updates.paymentHoldMinutes = args.paymentHoldMinutes;
+    }
+    if (args.allowOfflineMercadoPagoMethods !== undefined) {
+      updates.allowOfflineMercadoPagoMethods = args.allowOfflineMercadoPagoMethods;
     }
 
     const normalPricePerHour =
@@ -602,6 +645,10 @@ export const updateClubSettings = mutation({
     description: v.optional(v.string()),
     openingHours: v.optional(v.array(openingHourValidator)),
     pricing: v.optional(pricingValidator),
+    onlinePaymentsEnabled: v.optional(v.boolean()),
+    onlinePaymentRequired: v.optional(v.boolean()),
+    paymentHoldMinutes: v.optional(v.number()),
+    allowOfflineMercadoPagoMethods: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -636,6 +683,24 @@ export const updateClubSettings = mutation({
       updates.weekendPricePerHour = args.pricing.weekendPricePerHour;
       updates.peakStartMinutes = args.pricing.peakStartMinutes;
       updates.peakEndMinutes = args.pricing.peakEndMinutes;
+    }
+    if (args.onlinePaymentsEnabled !== undefined) {
+      updates.onlinePaymentsEnabled = args.onlinePaymentsEnabled;
+    }
+    if (args.onlinePaymentRequired !== undefined) {
+      updates.onlinePaymentRequired = args.onlinePaymentRequired;
+    }
+    if (args.paymentHoldMinutes !== undefined) {
+      if (args.paymentHoldMinutes < 5 || args.paymentHoldMinutes > 60) {
+        throw new ConvexError({
+          code: "VALIDATION_ERROR",
+          message: "El tiempo de pago debe estar entre 5 y 60 minutos.",
+        });
+      }
+      updates.paymentHoldMinutes = args.paymentHoldMinutes;
+    }
+    if (args.allowOfflineMercadoPagoMethods !== undefined) {
+      updates.allowOfflineMercadoPagoMethods = args.allowOfflineMercadoPagoMethods;
     }
 
     await ctx.db.patch(club._id, updates);

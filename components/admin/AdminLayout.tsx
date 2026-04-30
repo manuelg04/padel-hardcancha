@@ -6,6 +6,7 @@ import {
   Settings,
   Users,
   ClipboardList,
+  CreditCard,
 } from "lucide-react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useQuery } from "convex/react";
@@ -20,6 +21,7 @@ const navItems = [
   { href: "#reservas", label: "Reservas", icon: ClipboardList, active: false },
   { href: "#clientes", label: "Clientes", icon: Users, active: false },
   { href: "/admin/config", label: "Configuración", icon: Settings, active: true },
+  { href: "/admin/config/pagos", label: "Pagos", icon: CreditCard, active: true },
 ];
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -12,7 +12,13 @@ export type PricingRules = {
 export type BookingInterval = {
   startMinutes: number;
   endMinutes: number;
-  bookingStatus: "confirmed" | "cancelled" | "blocked";
+  bookingStatus:
+    | "payment_pending"
+    | "confirmed"
+    | "cancelled"
+    | "expired"
+    | "blocked";
+  paymentExpiresAt?: number;
 };
 
 export function getLocalDayOfWeek(localDate: string) {
@@ -70,20 +76,35 @@ export function bookingOverlaps(
   );
 }
 
-export function isActiveBookingStatus(status: BookingInterval["bookingStatus"]) {
-  return status === "confirmed" || status === "blocked";
+export function isActiveBookingStatus(
+  status: BookingInterval["bookingStatus"],
+  paymentExpiresAt?: number,
+  now = Date.now(),
+) {
+  if (status === "confirmed" || status === "blocked") return true;
+  if (status !== "payment_pending") return false;
+  return typeof paymentExpiresAt === "number" && paymentExpiresAt > now;
+}
+
+export function isActiveBooking(booking: BookingInterval, now = Date.now()) {
+  return isActiveBookingStatus(
+    booking.bookingStatus,
+    booking.paymentExpiresAt,
+    now,
+  );
 }
 
 export function isSlotAvailableForDuration(
   startMinutes: number,
   durationMinutes: number,
   bookings: readonly BookingInterval[],
+  now = Date.now(),
 ) {
   const requestedEndMinutes = startMinutes + durationMinutes;
 
   return !bookings.some(
     (booking) =>
-      isActiveBookingStatus(booking.bookingStatus) &&
+      isActiveBooking(booking, now) &&
       bookingOverlaps(booking, startMinutes, requestedEndMinutes),
   );
 }

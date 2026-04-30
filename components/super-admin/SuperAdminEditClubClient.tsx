@@ -42,6 +42,10 @@ export function SuperAdminEditClubClient({ clubId }: { clubId: string }) {
       isPublished: values.isPublished,
       isFeatured: values.isFeatured,
       bookingEnabled: values.bookingEnabled,
+      onlinePaymentsEnabled: values.onlinePaymentsEnabled,
+      onlinePaymentRequired: values.onlinePaymentRequired,
+      paymentHoldMinutes: values.paymentHoldMinutes,
+      allowOfflineMercadoPagoMethods: values.allowOfflineMercadoPagoMethods,
     });
 
     if (

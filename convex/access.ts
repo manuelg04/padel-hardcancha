@@ -69,10 +69,26 @@ export async function requireClubAccess(
   allowedRoles: ClubUserRole[],
 ) {
   const auth = await requireAuthUser(ctx);
+  const clubUser = await requireClubAccessForUser(
+    ctx,
+    auth.userId,
+    clubId,
+    allowedRoles,
+  );
+
+  return { ...auth, clubUser };
+}
+
+export async function requireClubAccessForUser(
+  ctx: Ctx,
+  userId: Id<"users">,
+  clubId: Id<"clubs">,
+  allowedRoles: ClubUserRole[],
+) {
   const clubUser = await ctx.db
     .query("clubUsers")
     .withIndex("by_user_club", (q) =>
-      q.eq("userId", auth.userId).eq("clubId", clubId),
+      q.eq("userId", userId).eq("clubId", clubId),
     )
     .unique();
 
@@ -84,7 +100,7 @@ export async function requireClubAccess(
     throw new ConvexError("No tienes acceso a este club.");
   }
 
-  return { ...auth, clubUser };
+  return clubUser;
 }
 
 export async function getCurrentUserClub(ctx: Ctx) {
