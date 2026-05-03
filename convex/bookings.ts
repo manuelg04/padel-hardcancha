@@ -5,9 +5,12 @@ import {
   bookingOverlaps,
   BOGOTA_TIMEZONE,
   calculateBookingValue,
+  getBogotaNowParts,
   getLocalDayOfWeek,
+  getPastSlotCutoffMinutes,
   isActiveBookingStatus,
   isSlotAvailableForDuration,
+  isSlotStartBookable,
   SLOT_MINUTES,
 } from "../lib/bookingRules";
 import { buildCustomerUpsert, normalizeCustomerPhone } from "../lib/customerRecords";
@@ -20,6 +23,7 @@ import {
   requireClubAccess,
 } from "./access";
 import {
+  bookingSettlementValidator,
   bookingValidator,
   clubValidator,
   courtValidator,
@@ -48,9 +52,13 @@ const agendaValidator = v.object({
   club: clubValidator,
   courts: v.array(courtValidator),
   bookings: v.array(bookingValidator),
+  settlements: v.array(bookingSettlementValidator),
   openMinutes: v.number(),
   closeMinutes: v.number(),
   isOpen: v.boolean(),
+  currentLocalDate: v.string(),
+  currentMinutes: v.number(),
+  pastSlotCutoffMinutes: v.union(v.number(), v.null()),
   metrics: v.object({
     reservationsToday: v.number(),
     pending: v.number(),
@@ -58,6 +66,7 @@ const agendaValidator = v.object({
     occupiedSlots: v.number(),
     totalSlots: v.number(),
     expectedRevenue: v.number(),
+    collectedRevenue: v.number(),
     blocks: v.number(),
   }),
 });
@@ -228,6 +237,13 @@ async function assertCanBook(args: {
     });
   }
 
+  if (!isSlotStartBookable(args.localDate, args.startMinutes)) {
+    throw new ConvexError({
+      code: "PAST_TIME",
+      message: "Este horario ya empezo o ya paso. Elige un horario mas adelante.",
+    });
+  }
+
   const endMinutes = args.startMinutes + args.durationMinutes;
   const existing = await listBookingsForCourtDate(
     args.ctx,
@@ -335,6 +351,7 @@ export const getAvailability = query({
     const bookings = await listBookingsForClubDate(ctx, club._id, args.localDate);
     const openingWindow = getOpeningWindow(club, args.localDate);
     const slots: AvailabilitySlot[] = [];
+    const now = Date.now();
 
     if (!openingWindow.isOpen) {
       return { courts, slots, ...openingWindow };
@@ -348,6 +365,10 @@ export const getAvailability = query({
         startMinutes + args.durationMinutes <= openingWindow.closeMinutes;
         startMinutes += SLOT_MINUTES
       ) {
+        if (!isSlotStartBookable(args.localDate, startMinutes, now)) {
+          continue;
+        }
+
         const endMinutes = startMinutes + args.durationMinutes;
         const overlappingBooking = findOverlappingBooking(
           courtBookings,
@@ -550,6 +571,13 @@ export const listAgendaByDate = query({
       await listBookingsForClubDate(ctx, club._id, args.localDate)
     ).filter((booking) => booking.bookingStatus !== "cancelled");
     const openingWindow = getOpeningWindow(club, args.localDate);
+    const now = Date.now();
+    const current = getBogotaNowParts(now);
+    const pastSlotCutoffMinutes = getPastSlotCutoffMinutes(
+      args.localDate,
+      openingWindow.closeMinutes,
+      now,
+    );
     const visibleBookings = bookings.sort((a, b) => {
       if (a.startMinutes !== b.startMinutes) {
         return a.startMinutes - b.startMinutes;
@@ -569,12 +597,44 @@ export const listAgendaByDate = query({
     const revenueBookings = visibleBookings.filter(
       (booking) => booking.bookingStatus !== "blocked",
     );
+    const settlements = (
+      await Promise.all(
+        revenueBookings.map((booking) =>
+          ctx.db
+            .query("bookingSettlements")
+            .withIndex("by_booking", (q) => q.eq("bookingId", booking._id))
+            .unique(),
+        ),
+      )
+    ).filter((settlement): settlement is Doc<"bookingSettlements"> =>
+      Boolean(settlement),
+    );
+    const settlementByBookingId = new Map(
+      settlements.map((settlement) => [settlement.bookingId, settlement]),
+    );
+    const collectedRevenue = revenueBookings.reduce((total, booking) => {
+      const settlement = settlementByBookingId.get(booking._id);
+
+      if (settlement?.status === "paid") {
+        return total + settlement.finalTotalCollectedValue;
+      }
+
+      if (!settlement && booking.paymentStatus === "paid") {
+        return total + booking.value;
+      }
+
+      return total;
+    }, 0);
 
     return {
       club,
       courts,
       bookings: visibleBookings,
+      settlements,
       ...openingWindow,
+      currentLocalDate: current.localDate,
+      currentMinutes: current.currentMinutes,
+      pastSlotCutoffMinutes,
       metrics: {
         reservationsToday: revenueBookings.length,
         pending: revenueBookings.filter(
@@ -588,6 +648,7 @@ export const listAgendaByDate = query({
           (total, booking) => total + booking.value,
           0,
         ),
+        collectedRevenue,
         blocks: visibleBookings.filter(
           (booking) => booking.bookingStatus === "blocked",
         ).length,
@@ -710,6 +771,19 @@ export const markBookingPaid = mutation({
     }
 
     await requireClubAccess(ctx, booking.clubId, ["club_master", "club_staff"]);
+
+    const existingSettlement = await ctx.db
+      .query("bookingSettlements")
+      .withIndex("by_booking", (q) => q.eq("bookingId", args.bookingId))
+      .unique();
+
+    if (existingSettlement && existingSettlement.status !== "cancelled") {
+      throw new ConvexError({
+        code: "BOOKING_HAS_SETTLEMENT",
+        message:
+          "Esta reserva ya tiene liquidacion. Marca como pagada la liquidacion.",
+      });
+    }
 
     if (booking.paymentStatus === "paid") {
       return null;

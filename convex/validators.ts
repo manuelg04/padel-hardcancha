@@ -45,6 +45,26 @@ export const roleStatusValidator = v.union(
   v.literal("inactive"),
 );
 
+export const membershipBenefitTypeValidator = v.union(
+  v.literal("free"),
+  v.literal("percentage_discount"),
+  v.literal("fixed_price"),
+);
+
+export const customerMembershipStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("paused"),
+  v.literal("cancelled"),
+  v.literal("expired"),
+);
+
+export const bookingSettlementStatusValidator = v.union(
+  v.literal("draft"),
+  v.literal("closed"),
+  v.literal("paid"),
+  v.literal("cancelled"),
+);
+
 export const openingHourValidator = v.object({
   dayOfWeek: v.number(),
   isOpen: v.boolean(),
@@ -191,4 +211,105 @@ export const customerValidator = v.object({
   status: roleStatusValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
+});
+
+export const membershipPlanValidator = v.object({
+  _id: v.id("membershipPlans"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  monthlyPrice: v.optional(v.number()),
+  benefitType: membershipBenefitTypeValidator,
+  discountPercent: v.optional(v.number()),
+  fixedPrice: v.optional(v.number()),
+  appliesAlways: v.boolean(),
+  validDaysOfWeek: v.optional(v.array(v.number())),
+  validStartTime: v.optional(v.string()),
+  validEndTime: v.optional(v.string()),
+  isActive: v.boolean(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+export const customerMembershipValidator = v.object({
+  _id: v.id("customerMemberships"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  customerId: v.id("customers"),
+  userId: v.optional(v.id("users")),
+  membershipPlanId: v.id("membershipPlans"),
+  status: customerMembershipStatusValidator,
+  startsAt: v.number(),
+  endsAt: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  cancelledAt: v.optional(v.number()),
+  notes: v.optional(v.string()),
+});
+
+export const settlementMemberChargeValidator = v.object({
+  customerId: v.id("customers"),
+  customerName: v.string(),
+  membershipId: v.id("customerMemberships"),
+  membershipPlanId: v.id("membershipPlans"),
+  membershipPlanName: v.string(),
+  benefitType: membershipBenefitTypeValidator,
+  discountPercent: v.optional(v.number()),
+  fixedPrice: v.optional(v.number()),
+  benefitApplied: v.boolean(),
+  benefitNotAppliedReason: v.optional(v.literal("outside_schedule")),
+  baseShareValue: v.number(),
+  chargedValue: v.number(),
+  discountValue: v.number(),
+});
+
+export const bookingSettlementValidator = v.object({
+  _id: v.id("bookingSettlements"),
+  _creationTime: v.number(),
+  bookingId: v.id("bookings"),
+  clubId: v.id("clubs"),
+  courtId: v.id("courts"),
+  createdByUserId: v.id("users"),
+  updatedByUserId: v.optional(v.id("users")),
+  status: bookingSettlementStatusValidator,
+  baseBookingValue: v.number(),
+  baseShareValue: v.number(),
+  playerSlots: v.number(),
+  memberCount: v.number(),
+  nonMemberCount: v.number(),
+  memberCharges: v.array(settlementMemberChargeValidator),
+  nonMemberUnitValue: v.number(),
+  nonMemberTotalValue: v.number(),
+  calculatedTotalCollectedValue: v.number(),
+  manualAdjustmentAmount: v.number(),
+  manualAdjustmentReason: v.optional(v.string()),
+  finalTotalCollectedValue: v.number(),
+  discountAbsorbedByClubValue: v.number(),
+  ruleSnapshot: v.array(v.string()),
+  paidAt: v.optional(v.number()),
+  closedAt: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  notes: v.optional(v.string()),
+});
+
+export const bookingSettlementPreviewValidator = v.object({
+  bookingId: v.id("bookings"),
+  clubId: v.id("clubs"),
+  courtId: v.id("courts"),
+  baseBookingValue: v.number(),
+  baseShareValue: v.number(),
+  playerSlots: v.number(),
+  memberCount: v.number(),
+  nonMemberCount: v.number(),
+  memberCharges: v.array(settlementMemberChargeValidator),
+  nonMemberUnitValue: v.number(),
+  nonMemberTotalValue: v.number(),
+  calculatedTotalCollectedValue: v.number(),
+  manualAdjustmentAmount: v.number(),
+  manualAdjustmentReason: v.optional(v.string()),
+  finalTotalCollectedValue: v.number(),
+  discountAbsorbedByClubValue: v.number(),
+  ruleSnapshot: v.array(v.string()),
 });

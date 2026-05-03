@@ -102,6 +102,7 @@ export function ReserveClient({
     court,
     slots: availability.slots.filter((slot) => slot.courtId === court._id),
   }));
+  const hasVisibleSlots = availability.slots.length > 0;
   const selectedSlot = selectedSlotKey
     ? availability.slots.find(
         (slot) =>
@@ -324,6 +325,18 @@ export function ReserveClient({
                   <p className="font-black">El club no abre esta fecha.</p>
                   <p className="mt-1 text-sm text-[var(--ink-600)]">
                     Prueba con otro día para ver horarios disponibles.
+                  </p>
+                </div>
+              ) : !hasVisibleSlots ? (
+                <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-8 text-center shadow-[var(--shadow-sm)]">
+                  <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-[var(--r-lg)] bg-[var(--ink-50)] text-[var(--ink-500)]">
+                    <Clock3 size={22} />
+                  </div>
+                  <p className="font-black">
+                    No quedan horarios disponibles para esta fecha.
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--ink-600)]">
+                    Prueba con otro día o cambia la duración.
                   </p>
                 </div>
               ) : (

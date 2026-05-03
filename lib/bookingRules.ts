@@ -92,6 +92,85 @@ export function isValidDuration(durationMinutes: number) {
   return durationMinutes === SLOT_MINUTES || durationMinutes === SLOT_MINUTES * 2;
 }
 
+export function getBogotaNowParts(now: Date | number = Date.now()) {
+  const date = typeof now === "number" ? new Date(now) : now;
+  const formatter = new Intl.DateTimeFormat("en", {
+    timeZone: BOGOTA_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+
+  return {
+    localDate: `${year}-${month}-${day}`,
+    currentMinutes: hour * 60 + minute,
+  };
+}
+
+export function getPastSlotCutoffMinutes(
+  localDate: string,
+  closeMinutes: number,
+  now: Date | number = Date.now(),
+) {
+  const current = getBogotaNowParts(now);
+
+  if (localDate < current.localDate) {
+    return closeMinutes;
+  }
+
+  if (localDate === current.localDate) {
+    return current.currentMinutes;
+  }
+
+  return null;
+}
+
+export function isSlotStartBookable(
+  localDate: string,
+  startMinutes: number,
+  now: Date | number = Date.now(),
+) {
+  const current = getBogotaNowParts(now);
+
+  if (localDate < current.localDate) {
+    return false;
+  }
+
+  if (localDate === current.localDate) {
+    return startMinutes > current.currentMinutes;
+  }
+
+  return true;
+}
+
+export function getNextBookableSlotStartMinutes(
+  openMinutes: number,
+  closeMinutes: number,
+  localDate: string,
+  now: Date | number = Date.now(),
+) {
+  for (
+    let startMinutes = openMinutes;
+    startMinutes < closeMinutes;
+    startMinutes += SLOT_MINUTES
+  ) {
+    if (isSlotStartBookable(localDate, startMinutes, now)) {
+      return startMinutes;
+    }
+  }
+
+  return null;
+}
+
 export function assertValidBookingWindow(
   startMinutes: number,
   durationMinutes: number,

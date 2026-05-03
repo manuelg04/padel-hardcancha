@@ -2,7 +2,6 @@
 
 import {
   Check,
-  CircleDollarSign,
   MessageCircle,
   Plus,
   Search,
@@ -13,7 +12,7 @@ import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import { calculateBookingValue } from "@/lib/bookingRules";
+import { calculateBookingValue, SLOT_MINUTES } from "@/lib/bookingRules";
 import {
   formatDateLong,
   getHourRows,
@@ -25,9 +24,11 @@ import {
 import { formatCOP, initials } from "@/lib/format";
 import { whatsappUrl } from "@/lib/whatsapp";
 import { AdminLayout } from "./AdminLayout";
+import { BookingSettlementPanel } from "./agenda/BookingSettlementPanel";
 
 type BookingDoc = Doc<"bookings">;
 type CourtDoc = Doc<"courts">;
+type SettlementDoc = Doc<"bookingSettlements">;
 type BookingFilter = "all" | "pending" | "paid" | "blocked";
 type ModalDefaults = {
   courtId?: Id<"courts">;
@@ -47,14 +48,31 @@ export function AgendaClient() {
     localDate,
   });
 
+  const settlementsByBookingId = useMemo(() => {
+    if (!agenda) return new Map<string, SettlementDoc>();
+
+    return new Map(
+      agenda.settlements.map((settlement) => [
+        settlement.bookingId,
+        settlement,
+      ]),
+    );
+  }, [agenda]);
   const visibleBookingIds = useMemo(() => {
     if (!agenda) return new Set<string>();
     return new Set(
       agenda.bookings
-        .filter((booking) => bookingMatchesFilter(booking, filter, search))
+        .filter((booking) =>
+          bookingMatchesFilter(
+            booking,
+            settlementsByBookingId.get(booking._id),
+            filter,
+            search,
+          ),
+        )
         .map((booking) => booking._id),
     );
-  }, [agenda, filter, search]);
+  }, [agenda, settlementsByBookingId, filter, search]);
 
   const selectedBooking = agenda?.bookings.find(
     (booking) => booking._id === selectedBookingId,
@@ -117,7 +135,7 @@ export function AgendaClient() {
           </div>
         ) : (
           <>
-            <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <MetricCard
                 label="Reservas hoy"
                 value={String(agenda.metrics.reservationsToday)}
@@ -129,9 +147,14 @@ export function AgendaClient() {
                 hint={`${agenda.metrics.occupiedSlots} / ${agenda.metrics.totalSlots} slots`}
               />
               <MetricCard
-                label="Ingresos esperados"
+                label="Valor cancha"
                 value={formatCOP(agenda.metrics.expectedRevenue)}
-                hint="Hoy"
+                hint="Reservas del dia"
+              />
+              <MetricCard
+                label="Cobrado real"
+                value={formatCOP(agenda.metrics.collectedRevenue)}
+                hint="Pagos recibidos"
               />
               <MetricCard
                 label="Bloqueos"
@@ -172,9 +195,11 @@ export function AgendaClient() {
               openMinutes={agenda.openMinutes}
               closeMinutes={agenda.closeMinutes}
               visibleBookingIds={visibleBookingIds}
+              settlementsByBookingId={settlementsByBookingId}
               onEmptySlot={(defaults) => setModalDefaults(defaults)}
               onBooking={(booking) => setSelectedBookingId(booking._id)}
               localDate={localDate}
+              pastSlotCutoffMinutes={agenda.pastSlotCutoffMinutes}
             />
 
             {modalDefaults ? (
@@ -182,6 +207,10 @@ export function AgendaClient() {
                 defaults={modalDefaults}
                 courts={agenda.courts}
                 pricing={agenda.club.pricing}
+                openMinutes={agenda.openMinutes}
+                closeMinutes={agenda.closeMinutes}
+                currentLocalDate={agenda.currentLocalDate}
+                currentMinutes={agenda.currentMinutes}
                 onClose={() => setModalDefaults(null)}
               />
             ) : null}
@@ -191,6 +220,7 @@ export function AgendaClient() {
                 key={selectedBooking._id}
                 booking={selectedBooking}
                 court={agenda.courts.find((court) => court._id === selectedBooking.courtId)}
+                settlement={settlementsByBookingId.get(selectedBooking._id)}
                 clubName={agenda.club.name}
                 onClose={() => setSelectedBookingId(null)}
               />
@@ -228,7 +258,9 @@ function AgendaGrid({
   openMinutes,
   closeMinutes,
   visibleBookingIds,
+  settlementsByBookingId,
   localDate,
+  pastSlotCutoffMinutes,
   onEmptySlot,
   onBooking,
 }: {
@@ -237,7 +269,9 @@ function AgendaGrid({
   openMinutes: number;
   closeMinutes: number;
   visibleBookingIds: Set<string>;
+  settlementsByBookingId: Map<string, SettlementDoc>;
   localDate: string;
+  pastSlotCutoffMinutes: number | null;
   onEmptySlot: (defaults: ModalDefaults) => void;
   onBooking: (booking: BookingDoc) => void;
 }) {
@@ -293,13 +327,17 @@ function AgendaGrid({
             if (startsHere) {
               const span = Math.max(1, startsHere.durationMinutes / 60);
               const visible = visibleBookingIds.has(startsHere._id);
+              const settlement = settlementsByBookingId.get(startsHere._id);
+              const isPaid = settlement
+                ? settlement.status === "paid"
+                : startsHere.paymentStatus === "paid";
               return (
                 <button
                   key={`${court._id}-${hour}`}
                   className={`m-1 rounded-[var(--r-md)] border p-3 text-left transition hover:scale-[1.01] ${
                     startsHere.bookingStatus === "blocked"
                       ? "blocked-pattern border-[var(--status-blocked-bg)] text-[var(--status-blocked-fg)]"
-                      : startsHere.paymentStatus === "paid"
+                      : isPaid
                         ? "border-[var(--court-600)] bg-[var(--court-500)] text-white"
                         : "border-[var(--status-pending-border)] bg-[var(--status-pending-bg)] text-[var(--status-pending-fg)]"
                   } ${visible ? "" : "opacity-30"}`}
@@ -317,20 +355,38 @@ function AgendaGrid({
                   <p className="mt-1 text-xs font-bold opacity-80">
                     {startsHere.bookingStatus === "blocked"
                       ? "Bloqueo"
-                      : `${formatCOP(startsHere.value)} · ${
-                          startsHere.paymentStatus === "paid" ? "Pagada" : "Pendiente"
-                        }`}
+                      : settlement
+                        ? `${formatCOP(startsHere.value)} cancha · ${formatCOP(
+                            settlement.finalTotalCollectedValue,
+                          )} ${
+                            settlement.status === "paid" ? "cobrado" : "a cobrar"
+                          }`
+                        : `${formatCOP(startsHere.value)} · ${
+                            startsHere.paymentStatus === "paid"
+                              ? "Pagada"
+                              : "Pendiente"
+                          }`}
                   </p>
                 </button>
               );
             }
 
+            const isPastEmptySlot =
+              pastSlotCutoffMinutes !== null && hour <= pastSlotCutoffMinutes;
+
             return (
               <button
                 key={`${court._id}-${hour}`}
-                className="m-1 rounded-[var(--r-md)] border border-[var(--ink-100)] bg-[var(--ink-50)] text-left text-xs font-bold text-[var(--ink-400)] hover:border-[var(--court-300)] hover:bg-[var(--court-50)] hover:text-[var(--court-700)]"
+                className={`m-1 rounded-[var(--r-md)] border text-left text-xs font-bold ${
+                  isPastEmptySlot
+                    ? "cursor-not-allowed border-[var(--ink-100)] bg-[var(--ink-50)] text-[var(--ink-400)] opacity-45"
+                    : "border-[var(--ink-100)] bg-[var(--ink-50)] text-[var(--ink-400)] hover:border-[var(--court-300)] hover:bg-[var(--court-50)] hover:text-[var(--court-700)]"
+                }`}
+                disabled={isPastEmptySlot}
+                aria-disabled={isPastEmptySlot}
                 style={{ gridColumn: courtIndex + 2, gridRow: rowIndex + 2 }}
                 onClick={() =>
+                  !isPastEmptySlot &&
                   onEmptySlot({
                     courtId: court._id,
                     localDate,
@@ -338,7 +394,9 @@ function AgendaGrid({
                   })
                 }
               >
-                <span className="px-3">Disponible</span>
+                <span className="px-3">
+                  {isPastEmptySlot ? "Pasado" : "Disponible"}
+                </span>
               </button>
             );
           }),
@@ -352,17 +410,33 @@ function ManualBookingModal({
   defaults,
   courts,
   pricing,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
   onClose,
 }: {
   defaults: ModalDefaults;
   courts: CourtDoc[];
   pricing: Doc<"clubs">["pricing"];
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
   onClose: () => void;
 }) {
   const createManualBooking = useMutation(api.bookings.createManualBooking);
   const [courtId, setCourtId] = useState(defaults.courtId ?? courts[0]?._id);
   const [localDate, setLocalDate] = useState(defaults.localDate);
-  const [startMinutes, setStartMinutes] = useState(defaults.startMinutes ?? 17 * 60);
+  const [startMinutes, setStartMinutes] = useState(
+    getInitialManualStartMinutes({
+      defaults,
+      openMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    }),
+  );
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -377,6 +451,13 @@ function ManualBookingModal({
     durationMinutes,
     pricing,
   );
+  const selectedStartIsPast = isPastManualSlot({
+    localDate,
+    startMinutes,
+    closeMinutes,
+    currentLocalDate,
+    currentMinutes,
+  });
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -384,6 +465,11 @@ function ManualBookingModal({
 
     if (!courtId || customerName.trim().length < 3 || customerPhone.trim().length < 7) {
       setError("Completa cancha, cliente y celular.");
+      return;
+    }
+
+    if (selectedStartIsPast) {
+      setError("Este horario ya empezo o ya paso. Elige un horario mas adelante.");
       return;
     }
 
@@ -542,11 +628,21 @@ function ManualBookingModal({
           </p>
         ) : null}
 
+        {selectedStartIsPast ? (
+          <p className="mt-4 rounded-[var(--r-md)] bg-[var(--ink-50)] p-3 text-sm font-bold text-[var(--ink-500)]">
+            Este horario ya empezo o ya paso. Elige un horario mas adelante.
+          </p>
+        ) : null}
+
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-primary">
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={selectedStartIsPast}
+          >
             <Check size={17} />
             Crear reserva
           </button>
@@ -556,18 +652,127 @@ function ManualBookingModal({
   );
 }
 
+function getPastSlotCutoffFromServerTime({
+  localDate,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  localDate: string;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  if (localDate < currentLocalDate) {
+    return closeMinutes;
+  }
+
+  if (localDate === currentLocalDate) {
+    return currentMinutes;
+  }
+
+  return null;
+}
+
+function isPastManualSlot(args: {
+  localDate: string;
+  startMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  const cutoffMinutes = getPastSlotCutoffFromServerTime(args);
+
+  return cutoffMinutes !== null && args.startMinutes <= cutoffMinutes;
+}
+
+function getNextManualStartMinutes({
+  localDate,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  localDate: string;
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  for (
+    let startMinutes = openMinutes;
+    startMinutes < closeMinutes;
+    startMinutes += SLOT_MINUTES
+  ) {
+    if (
+      !isPastManualSlot({
+        localDate,
+        startMinutes,
+        closeMinutes,
+        currentLocalDate,
+        currentMinutes,
+      })
+    ) {
+      return startMinutes;
+    }
+  }
+
+  return null;
+}
+
+function getInitialManualStartMinutes({
+  defaults,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  defaults: ModalDefaults;
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  if (
+    defaults.startMinutes !== undefined &&
+    !isPastManualSlot({
+      localDate: defaults.localDate,
+      startMinutes: defaults.startMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    })
+  ) {
+    return defaults.startMinutes;
+  }
+
+  return (
+    getNextManualStartMinutes({
+      localDate: defaults.localDate,
+      openMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    }) ??
+    defaults.startMinutes ??
+    openMinutes ??
+    17 * 60
+  );
+}
+
 function BookingDetailDrawer({
   booking,
   court,
+  settlement,
   clubName,
   onClose,
 }: {
   booking: BookingDoc;
   court?: CourtDoc;
+  settlement?: SettlementDoc;
   clubName: string;
   onClose: () => void;
 }) {
-  const markPaid = useMutation(api.bookings.markBookingPaid);
   const cancelBooking = useMutation(api.bookings.cancelBooking);
   const updateNote = useMutation(api.bookings.updateBookingNote);
   const [note, setNote] = useState(booking.internalNote ?? "");
@@ -586,7 +791,7 @@ function BookingDetailDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/35">
-      <aside className="h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-[var(--shadow-pop)]">
+      <aside className="h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-[var(--shadow-pop)]">
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h2 className="text-display text-2xl font-black">
@@ -615,7 +820,7 @@ function BookingDetailDrawer({
               {booking.customerEmail ? ` · ${booking.customerEmail}` : ""}
             </p>
           </div>
-          <StatusBadge booking={booking} />
+          <StatusBadge booking={booking} settlement={settlement} />
         </div>
 
         <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] p-4">
@@ -625,7 +830,7 @@ function BookingDetailDrawer({
             label="Hora"
             value={minutesToRange(booking.startMinutes, booking.endMinutes)}
           />
-          <Detail label="Valor" value={formatCOP(booking.value)} />
+          <Detail label="Valor cancha" value={formatCOP(booking.value)} />
           <Detail label="Origen" value={sourceLabel(booking.source)} />
           <Detail
             label="Creada"
@@ -637,6 +842,8 @@ function BookingDetailDrawer({
             }).format(new Date(booking.createdAt))}
           />
         </div>
+
+        <BookingSettlementPanel booking={booking} court={court} />
 
         <div className="field mt-5">
           <label>Nota interna</label>
@@ -650,16 +857,6 @@ function BookingDetailDrawer({
         ) : null}
 
         <div className="mt-5 grid gap-2">
-          {booking.bookingStatus !== "blocked" ? (
-            <button
-              className="btn btn-primary btn-block"
-              disabled={booking.paymentStatus === "paid"}
-              onClick={() => runAction(() => markPaid({ bookingId: booking._id }))}
-            >
-              <CircleDollarSign size={17} />
-              Marcar pagada
-            </button>
-          ) : null}
           <button
             className="btn btn-ghost btn-block"
             onClick={() =>
@@ -715,12 +912,28 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusBadge({ booking }: { booking: BookingDoc }) {
+function StatusBadge({
+  booking,
+  settlement,
+}: {
+  booking: BookingDoc;
+  settlement?: SettlementDoc;
+}) {
   if (booking.bookingStatus === "blocked") {
     return (
       <span className="pill pill-blocked">
         <span className="dot" />
         Bloqueada
+      </span>
+    );
+  }
+
+  if (settlement && settlement.status !== "cancelled") {
+    const paid = settlement.status === "paid";
+    return (
+      <span className={`pill ${paid ? "pill-paid" : "pill-pending"}`}>
+        <span className="dot" />
+        {paid ? "Liquidacion pagada" : "Liquidacion pendiente"}
       </span>
     );
   }
@@ -746,18 +959,22 @@ function sourceLabel(source: BookingDoc["source"]) {
 
 function bookingMatchesFilter(
   booking: BookingDoc,
+  settlement: SettlementDoc | undefined,
   filter: BookingFilter,
   search: string,
 ) {
+  const paid = settlement && settlement.status !== "cancelled"
+    ? settlement.status === "paid"
+    : booking.paymentStatus === "paid";
   const matchesFilter =
     filter === "all" ||
     (filter === "blocked" && booking.bookingStatus === "blocked") ||
     (filter === "pending" &&
       booking.bookingStatus !== "blocked" &&
-      booking.paymentStatus === "pending") ||
+      !paid) ||
     (filter === "paid" &&
       booking.bookingStatus !== "blocked" &&
-      booking.paymentStatus === "paid");
+      paid);
 
   if (!matchesFilter) return false;
 
