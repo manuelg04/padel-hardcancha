@@ -7,6 +7,7 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { formatDateLong, minutesToRange } from "@/lib/dates";
 import { formatCOP } from "@/lib/format";
+import { normalizePublicBookingReceiptResponse } from "@/lib/securityRules";
 import { reservationShareMessage, whatsappUrl } from "@/lib/whatsapp";
 import { PlayerShell } from "./PlayerShell";
 
@@ -17,7 +18,9 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
     return <PlayerShell>Loading reservation...</PlayerShell>;
   }
 
-  if (result === null) {
+  const receipt = normalizePublicBookingReceiptResponse(result);
+
+  if (result === null || !receipt) {
     return (
       <PlayerShell>
         <div className="min-h-full bg-[var(--paper)] px-5 py-8">
@@ -32,15 +35,14 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
     );
   }
 
-  const { booking, court, clubName, clubWhatsapp } = result;
-  const hour = minutesToRange(booking.startMinutes, booking.endMinutes);
+  const hour = minutesToRange(receipt.startMinutes, receipt.endMinutes);
   const message = reservationShareMessage({
-    clubName,
-    code: booking.code,
-    date: formatDateLong(booking.localDate),
+    clubName: receipt.clubName,
+    code: receipt.code,
+    date: formatDateLong(receipt.localDate),
     hour,
-    court: court.name,
-    value: booking.value,
+    court: receipt.courtName,
+    value: receipt.value,
   });
 
   return (
@@ -53,7 +55,9 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
           <h1 className="text-display mt-6 text-3xl font-black md:text-5xl">
             ¡Reserva confirmada!
           </h1>
-          <p className="mt-2 text-[var(--ink-500)]">Te esperamos en {clubName}.</p>
+          <p className="mt-2 text-[var(--ink-500)]">
+            Te esperamos en {receipt.clubName}.
+          </p>
 
           <div className="my-7 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4 text-left shadow-[var(--shadow-sm)] md:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -61,28 +65,23 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--ink-500)]">
                   Código
                 </p>
-                <p className="text-mono text-lg font-black">{booking.code}</p>
+                <p className="text-mono text-lg font-black">{receipt.code}</p>
               </div>
-              <span
-                className={`pill ${
-                  booking.paymentStatus === "paid" ? "pill-paid" : "pill-pending"
-                }`}
-              >
+              <span className="pill pill-paid">
                 <span className="dot" />
-                {booking.paymentStatus === "paid" ? "Pagada" : "Pago pendiente"}
+                Registrada
               </span>
             </div>
-            <Detail label="Cancha" value={court.name} />
-            <Detail label="Fecha" value={formatDateLong(booking.localDate)} />
+            <Detail label="Cancha" value={receipt.courtName} />
+            <Detail label="Fecha" value={formatDateLong(receipt.localDate)} />
             <Detail label="Hora" value={hour} />
-            <Detail label="Cliente" value={booking.customerName ?? "Sin nombre"} />
-            <Detail label="Valor" value={formatCOP(booking.value)} />
+            <Detail label="Valor" value={formatCOP(receipt.value)} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <a
               className="btn btn-primary btn-block"
-              href={whatsappUrl(clubWhatsapp, message)}
+              href={whatsappUrl(receipt.clubWhatsapp, message)}
               target="_blank"
               rel="noreferrer"
             >
@@ -91,7 +90,10 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
             </a>
             <a
               className="btn btn-ghost btn-block"
-              href={whatsappUrl(clubWhatsapp, `Hola, tengo una reserva ${booking.code}.`)}
+              href={whatsappUrl(
+                receipt.clubWhatsapp,
+                `Hola, tengo una reserva ${receipt.code}.`,
+              )}
               target="_blank"
               rel="noreferrer"
             >

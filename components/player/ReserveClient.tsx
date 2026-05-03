@@ -395,11 +395,6 @@ export function ReserveClient({
                               slot.startMinutes,
                             );
                             const isSelected = selectedSlotKey === key;
-                            const unavailableLabel =
-                              slot.bookingStatus === "blocked"
-                                ? "Bloqueada"
-                                : "Ocupada";
-
                             return (
                               <button
                                 key={`${slot.courtId}-${slot.startMinutes}`}
@@ -452,7 +447,7 @@ export function ReserveClient({
                                     </span>
                                   ) : (
                                     <span className="text-sm font-black text-[var(--ink-500)]">
-                                      {unavailableLabel}
+                                      Ocupada
                                     </span>
                                   )}
                                   {slot.isAvailable ? (

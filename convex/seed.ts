@@ -1,6 +1,7 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { BOGOTA_TIMEZONE, calculateBookingValue } from "../lib/bookingRules";
+import { isSeedTokenAuthorized } from "../lib/securityRules";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
@@ -11,6 +12,15 @@ const defaultOpeningHours = [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
   openMinutes: 6 * 60,
   closeMinutes: 23 * 60,
 }));
+
+function assertSeedAuthorized(seedToken?: string) {
+  if (!isSeedTokenAuthorized(seedToken, process.env.SEED_DEMO_TOKEN)) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: "No tienes permisos para sembrar datos demo.",
+    });
+  }
+}
 
 type ClubSeed = {
   name: string;
@@ -433,12 +443,14 @@ async function seedAccessForExistingUsers(
 }
 
 export const seedDemoData = mutation({
-  args: {},
+  args: { seedToken: v.optional(v.string()) },
   returns: v.object({
     clubId: v.id("clubs"),
     courtIds: v.array(v.id("courts")),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
+    assertSeedAuthorized(args.seedToken);
+
     let matchPointClubId: Id<"clubs"> | null = null;
     let matchPointCourtIds: Id<"courts">[] = [];
 
@@ -522,12 +534,14 @@ export const seedDemoData = mutation({
 });
 
 export const seedDemoAccess = mutation({
-  args: {},
+  args: { seedToken: v.optional(v.string()) },
   returns: v.object({
     superAdmin: v.boolean(),
     clubMaster: v.boolean(),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
+    assertSeedAuthorized(args.seedToken);
+
     const matchPoint = await ctx.db
       .query("clubs")
       .withIndex("by_slug", (q) => q.eq("slug", "match-point"))

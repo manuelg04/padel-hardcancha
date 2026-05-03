@@ -1,85 +1,183 @@
 # AGENTS.md
 
-Guia para LLMs y devs nuevos que trabajen en este proyecto.
+Guia corta para agentes y LLMs que trabajen en este proyecto.
 
-## Resumen del producto
+## Reglas para agentes
 
-Padel Hardcancha / CanchaBGA Padel es un prototipo web para reservas de canchas de padel. Tiene dos experiencias:
+- Nunca menciones Codex como coautor en commits.
+- No agregues comentarios en el codigo.
+- Antes de cambiar Next.js, revisa la guia local en `node_modules/next/dist/docs/`.
+- En pages dinamicas de App Router, `params` y `searchParams` se tratan como Promises y se resuelven con `await`.
+- No edites `convex/_generated/` a mano.
+- Mantén las validaciones criticas en Convex, no solo en la interfaz.
+- Si cambias interfaz, revisa visualmente el flujo afectado.
 
-- Jugador: landing del club, seleccion de fecha/hora, confirmacion de datos y pantalla de reserva confirmada.
-- Administrador: login demo, agenda diaria, creacion manual de reservas, bloqueos, pagos, cancelaciones y configuracion del club/canchas.
+## Producto
 
-El club demo principal es `match-point`.
+Padel Hardcancha / CanchaBGA Padel es una app web para clubes de padel.
+
+Experiencias principales:
+
+- Publico: directorio de clubes, pagina publica del club y reserva por fecha, hora, duracion y cancha.
+- Jugador: autenticacion, creacion de reservas y consulta de `mis reservas`.
+- Admin de club: agenda diaria, reservas manuales, bloqueos, pagos, cancelaciones, notas, membresias y configuracion.
+- Super admin: creacion, edicion, publicacion y administracion de clubes/canchas.
 
 ## Stack
 
 - Next.js `16.2.4` con App Router.
 - React `19.2.4`.
 - TypeScript estricto.
-- Tailwind CSS `4` mediante `@tailwindcss/postcss`.
-- Convex como backend/base de datos en tiempo real.
-- Vitest para pruebas unitarias.
-- ESLint 9 con reglas de Next core web vitals y TypeScript.
+- Tailwind CSS `4`.
+- Convex como backend, base de datos en tiempo real y autenticacion.
+- `@convex-dev/auth` para login.
+- Vitest para pruebas.
+- ESLint 9.
 - Iconos con `lucide-react`.
-
-## Regla importante sobre Next.js
-
-Este proyecto usa una version reciente de Next.js con cambios que pueden diferir de conocimiento previo del modelo.
-
-Antes de modificar codigo de Next, leer la guia relevante en:
-
-```text
-node_modules/next/dist/docs/
-```
-
-Ejemplos utiles:
-
-- Rutas, layouts y pages: `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`
-- Server y Client Components: `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
-- Navegacion: `node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md`
-- Mutaciones/datos: `node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md`
-
-En este proyecto, los `params` y `searchParams` de las pages dinamicas se usan como Promises y se resuelven con `await`.
 
 ## Comandos
 
-Instalar dependencias:
-
 ```bash
 npm install
-```
-
-Levantar el frontend:
-
-```bash
 npm run dev
-```
-
-Abrir:
-
-```text
-http://localhost:3000
-```
-
-El home redirige a:
-
-```text
-/club/match-point
-```
-
-Levantar Convex en desarrollo:
-
-```bash
 npx convex dev
+npx convex run seed:seedDemoData --args '{"seedToken":"..."}'
+npm run typecheck
+npm run lint
+npm run test
+npm run build
 ```
 
-Sembrar datos demo:
+Abrir `http://localhost:3000`. El home redirige a `/clubes`.
 
-```bash
-npx convex run seed:seedDemoData
+## Entorno
+
+```text
+CONVEX_DEPLOYMENT=...
+NEXT_PUBLIC_CONVEX_URL=...
+NEXT_PUBLIC_CONVEX_SITE_URL=...
+SEED_DEMO_TOKEN=...
 ```
 
-Validaciones antes de reportar cambios:
+- `NEXT_PUBLIC_CONVEX_URL` se usa en `app/providers.tsx`.
+- Si falta `NEXT_PUBLIC_CONVEX_URL`, se usa el deployment demo `https://majestic-fennec-628.convex.cloud`.
+- `SEED_DEMO_TOKEN` protege los seeders publicos de Convex.
+- No publiques secretos. Las variables `NEXT_PUBLIC_*` son visibles en el navegador.
+
+## Rutas principales
+
+Publicas y jugador:
+
+- `/clubes`: directorio de clubes publicados.
+- `/club/[slug]`: pagina publica de un club.
+- `/club/[slug]/reservar`: disponibilidad y seleccion de slot.
+- `/club/[slug]/confirmar`: confirmacion de datos y creacion de reserva.
+- `/club/[slug]/reserva/[code]`: comprobante de reserva.
+- `/login`, `/registro`, `/logout`: autenticacion.
+- `/mis-reservas`: reservas del usuario autenticado.
+
+Admin de club: `/admin/agenda`, `/admin/membresias`, `/admin/config`.
+Super admin: `/super-admin/login`, `/super-admin/clubes`, `/super-admin/clubes/nuevo`, `/super-admin/clubes/[clubId]/editar`.
+
+## Arquitectura
+
+```text
+app/                    Rutas App Router y wrappers livianos.
+components/player/      Flujo movil del jugador.
+components/public/      Directorio y paginas publicas.
+components/admin/       Panel del club.
+components/super-admin/ Panel global de clubes.
+components/auth/        Login, registro y logout.
+convex/                 Backend, schema, auth, queries y mutations.
+lib/                    Reglas puras, fechas, formato y helpers.
+tests/                  Pruebas unitarias de reglas.
+```
+
+## Convex y datos
+
+Tablas principales en `convex/schema.ts`:
+
+- `users`, tablas de auth, `platformRoles`, `clubUsers`.
+- `clubs`, `courts`, `customers`, `bookings`.
+- `membershipPlans`, `customerMemberships`, `bookingSettlements`.
+
+Archivos clave:
+
+- `convex/access.ts`: permisos y usuario actual.
+- `convex/auth.ts`: configuracion de autenticacion.
+- `convex/clubs.ts`: clubes, configuracion y super-admin.
+- `convex/bookings.ts`: disponibilidad, reservas, agenda, pagos y bloqueos.
+- `convex/memberships.ts`: planes y asignaciones.
+- `convex/settlements.ts`: previsualizacion y cierre de liquidaciones.
+- `convex/courts.ts` y `convex/validators.ts`: canchas y validadores compartidos.
+
+## Reglas de negocio
+
+Reservas (`lib/bookingRules.ts`):
+
+- Zona horaria principal: `America/Bogota`.
+- Duraciones validas: 60 o 120 minutos; slots de 60 minutos.
+- Horarios en minutos desde medianoche.
+- `confirmed` y `blocked` ocupan disponibilidad.
+- `cancelled` no ocupa disponibilidad.
+- Una reserva de 120 minutos requiere ambas horas libres.
+- No se deben reservar slots pasados.
+- El precio se calcula por hora: fin de semana, normal o pico.
+
+Clientes (`lib/customerRecords.ts`): el telefono se normaliza y las reservas online pueden asociarse a usuario y/o cliente.
+
+Membresias (`lib/membershipRules.ts`):
+
+- Beneficios: gratis, descuento porcentual o precio fijo.
+- Pueden aplicar siempre o solo en dias/horarios definidos.
+- Un cliente no debe tener membresias activas solapadas del mismo club.
+
+Liquidaciones (`lib/settlementRules.ts`):
+
+- MVP con 4 cupos por reserva.
+- Calcula cobro por miembro, no miembro, descuento absorbido y ajuste manual.
+- Se guardan snapshots de reglas para auditoria.
+
+## Flujos importantes
+
+Reserva publica:
+
+1. `/club/[slug]` carga club y canchas; `/reservar` consulta `api.bookings.getAvailability`.
+2. `/confirmar` vuelve a validar disponibilidad visible.
+3. `createOnlineBooking` valida en Convex club, cancha, horario, solapes y pasado.
+4. La reserva creada lleva a `/reserva/[code]`.
+
+Admin de club:
+
+1. El acceso depende del usuario autenticado y `clubUsers`.
+2. `getCurrentUserClubForAdmin` define el club operativo.
+3. La agenda usa `listAgendaByDate`.
+4. Desde agenda se crean reservas manuales, bloqueos, pagos, cancelaciones, notas y liquidaciones.
+
+Super admin:
+
+1. Requiere rol activo en `platformRoles`.
+2. Puede crear, editar, publicar, despublicar y desactivar clubes.
+3. Puede administrar canchas y asignar responsable del club.
+
+## Estilo visual
+
+- Mantén una estetica de club deportivo: verde cancha, tinta, blanco y estados claros.
+- Usa tokens y clases de `app/globals.css` como `btn`, `btn-primary`, `btn-ghost`, `btn-icon`, `field`, `pill`.
+- Usa `lucide-react` para iconos.
+- Evita estilos globales nuevos si Tailwind local alcanza.
+- En desktop, la experiencia del jugador puede simular telefono; en movil debe ocupar pantalla completa.
+
+## Al cambiar codigo
+
+- Cambios de reservas: revisa `lib/bookingRules.ts`, `convex/bookings.ts` y `tests/bookingRules.test.ts`.
+- Cambios de membresias: revisa `lib/membershipRules.ts`, `convex/memberships.ts` y `tests/membershipRules.test.ts`.
+- Cambios de liquidaciones: revisa `lib/settlementRules.ts`, `convex/settlements.ts` y `tests/settlementRules.test.ts`.
+- Cambios de auth/permisos: revisa `convex/access.ts`, `convex/users.ts`, `lib/authRouting.ts` y `components/auth/`.
+- Cambios de UI: levanta la app y revisa la ruta afectada.
+- Despues de tocar Convex, corre `npx convex dev` si necesitas regenerar tipos.
+
+## Validacion antes de reportar
 
 ```bash
 npm run typecheck
@@ -88,211 +186,12 @@ npm run test
 npm run build
 ```
 
-Para cambios solo de documentacion, al menos confirmar que el archivo existe y que el contenido quedo completo. Si el cambio toca interfaz, levantar el proyecto y revisar visualmente los flujos afectados.
-
-## Variables de entorno
-
-El proyecto usa `.env.local`.
-
-Variables esperadas:
-
-```text
-CONVEX_DEPLOYMENT=...
-NEXT_PUBLIC_CONVEX_URL=...
-NEXT_PUBLIC_CONVEX_SITE_URL=...
-```
-
-Notas:
-
-- `NEXT_PUBLIC_CONVEX_URL` es usada por `app/providers.tsx`.
-- Si no existe `NEXT_PUBLIC_CONVEX_URL`, el cliente cae al deployment demo `https://majestic-fennec-628.convex.cloud`.
-- No publiques secretos ni tokens. Las variables `NEXT_PUBLIC_*` son visibles para el navegador.
-
-## Rutas principales
-
-Publicas para jugadores:
-
-- `/` redirige a `/club/match-point`.
-- `/club/[slug]` muestra la pagina publica del club.
-- `/club/[slug]/reservar` muestra disponibilidad por fecha, duracion y cancha.
-- `/club/[slug]/confirmar` recibe datos por query string y confirma la reserva.
-- `/club/[slug]/reserva/[code]` muestra el comprobante de reserva.
-
-Admin:
-
-- `/admin/login` usa credenciales demo locales.
-- `/admin/agenda` muestra la agenda diaria y operaciones de reservas.
-- `/admin/config` permite editar datos del club, precios, horarios y canchas.
-
-Credenciales demo:
-
-```text
-email: recepcion@matchpointpadel.co
-password: demo1234
-```
-
-El login demo vive en `localStorage`. No es autenticacion real ni debe tratarse como seguridad de produccion.
-
-## Arquitectura de carpetas
-
-```text
-app/
-  layout.tsx              Layout raiz, fuentes y proveedor de Convex.
-  providers.tsx           ConvexProvider del lado cliente.
-  page.tsx                Redireccion al club demo.
-  globals.css             Tokens visuales, utilidades globales y estilos base.
-  club/[slug]/...         Rutas publicas del jugador.
-  admin/...               Rutas del panel administrativo.
-
-components/
-  player/                 Experiencia movil del jugador.
-  admin/                  Panel administrativo y componentes de operacion.
-
-convex/
-  schema.ts               Tablas clubs, courts y bookings.
-  validators.ts           Validadores compartidos de Convex.
-  clubs.ts                Consultas/mutaciones del club.
-  courts.ts               Consultas/mutaciones de canchas.
-  bookings.ts             Disponibilidad, reservas, agenda, pagos y bloqueos.
-  seed.ts                 Datos demo de Match Point Padel.
-  _generated/             Archivos generados por Convex. No editarlos a mano.
-
-lib/
-  bookingRules.ts         Reglas puras de disponibilidad, precios y horarios.
-  dates.ts                Fechas locales, formato y conversion hora/minutos.
-  demoSession.ts          Login demo con localStorage.
-  format.ts               Formato COP, telefonos e iniciales.
-  whatsapp.ts             URLs y mensajes de WhatsApp.
-
-tests/
-  bookingRules.test.ts    Pruebas de precios, disponibilidad y fechas.
-```
-
-## Modelo de datos
-
-`clubs`
-
-- Identifica el club por `slug`.
-- Guarda ciudad, direccion, WhatsApp, zona horaria, descripcion, horarios, precios y estado activo.
-- Tiene indice `by_slug`.
-
-`courts`
-
-- Pertenece a un club.
-- Guarda nombre, descripcion, tipo de cancha, si es techada, orden y estado activo.
-- Tiene indice `by_club`.
-
-`bookings`
-
-- Representa reservas y bloqueos.
-- Campos clave: club, cancha, codigo, fecha local, inicio/fin en minutos, duracion, cliente, origen, pago, estado y valor.
-- Estados de reserva: `confirmed`, `cancelled`, `blocked`.
-- Estados de pago: `pending`, `paid`.
-- Origenes: `online`, `manual`, `whatsapp`, `walk_in`.
-- Indices: `by_club_date`, `by_court_date`, `by_code`, `by_club_status`.
-
-## Reglas de reservas
-
-Las reglas centrales estan en `lib/bookingRules.ts`.
-
-- Zona horaria principal: `America/Bogota`.
-- Duracion valida: 60 o 120 minutos.
-- Los horarios se manejan como minutos desde medianoche.
-- El tamano de slot es de 60 minutos.
-- Reservas `confirmed` y bloqueos `blocked` ocupan disponibilidad.
-- Reservas `cancelled` no bloquean disponibilidad.
-- Una reserva de 2 horas requiere que ambas horas consecutivas esten libres.
-- Los precios se calculan por hora:
-  - Fin de semana usa precio de fin de semana para todas las horas.
-  - Entre semana usa precio normal o pico segun hora de inicio de cada tramo.
-
-## Flujo del jugador
-
-1. `/club/[slug]` consulta `api.clubs.getClubBySlug`.
-2. El jugador entra a `/reservar`.
-3. `ReserveClient` consulta `api.bookings.getAvailability` con club, fecha y duracion.
-4. Al elegir un slot disponible, navega a `/confirmar` con `courtId`, `date`, `startMinutes` y `durationMinutes`.
-5. `ConfirmClient` vuelve a consultar disponibilidad para validar el slot visible.
-6. Al enviar el formulario, ejecuta `api.bookings.createOnlineBooking`.
-7. Convex valida club, cancha, horario y solapes antes de insertar.
-8. El jugador llega a `/reserva/[code]`, donde puede compartir por WhatsApp.
-
-## Flujo admin
-
-1. `/admin/login` valida credenciales demo en `lib/demoSession.ts`.
-2. `AdminLayout` protege visualmente las rutas revisando la sesion demo en `localStorage`.
-3. `/admin/agenda` consulta `api.bookings.listAgendaByDate`.
-4. La agenda muestra metricas, filtros, busqueda y grilla por cancha/hora.
-5. Desde la agenda se pueden crear reservas manuales, bloquear horarios, marcar pagos, cancelar y editar notas.
-6. `/admin/config` permite editar club, horarios, precios y canchas.
-
-## Convex
-
-Despues de cambiar archivos en `convex/`, regenerar tipos si hace falta:
-
-```bash
-npx convex dev
-```
-
-No edites manualmente `convex/_generated/` salvo que sepas exactamente por que. Normalmente los genera Convex.
-
-Cada query/mutation declara `args` y `returns`; conserva ese patron.
-
-Al cambiar reglas de reservas, revisa tanto:
-
-- `lib/bookingRules.ts`
-- `convex/bookings.ts`
-- `tests/bookingRules.test.ts`
-
-## Estilo visual y UX
-
-- La experiencia de jugador simula un telefono en desktop y pantalla completa en movil.
-- Los tokens globales viven en `app/globals.css`.
-- Usa clases existentes como `btn`, `btn-primary`, `btn-ghost`, `btn-icon`, `field`, `pill`.
-- Mantener la estetica de club deportivo: verde cancha, tinta, papel blanco, estados claros para disponible/pendiente/pagado/bloqueado.
-- Para iconos, usar `lucide-react`.
-- Evitar meter estilos globales innecesarios si una clase local de Tailwind alcanza.
-
-## Consideraciones importantes
-
-- El slug `match-point` esta hardcodeado en varias partes del admin. Si se multi-clubiza, revisar esas dependencias.
-- El login admin es solo demo. No agregar funciones sensibles asumiendo seguridad real.
-- El cliente de Convex se crea en `app/providers.tsx`, por eso las pantallas que usan `useQuery` o `useMutation` son Client Components.
-- Las pages de `app/` suelen ser wrappers livianos; la logica interactiva vive en `components/`.
-- Fechas visibles deben tratarse como fechas locales de Bogota y evitar desplazamientos por UTC.
-- Valores monetarios se muestran con `formatCOP`.
-- Telefonos/WhatsApp se normalizan en `lib/whatsapp.ts` y `lib/format.ts`.
-- Validaciones criticas de reservas deben estar en Convex, no solo en UI.
-
-## Pruebas actuales
-
-Las pruebas cubren:
-
-- Calculo de precios normal, pico y fin de semana.
-- Deteccion de solapes.
-- Disponibilidad con reservas confirmadas, bloqueos y canceladas.
-- Fechas locales sin corrimiento de dia.
-
-Ejecutar:
-
-```bash
-npm run test
-```
-
-## Criterio de terminado para cambios
-
-Antes de decir que algo esta listo:
-
-1. Identificar que flujo o regla se toco.
-2. Ejecutar la validacion mas cercana: test, typecheck, lint, build o revision visual.
-3. Si se cambio UI, abrir la pagina afectada y comprobar que carga y que el flujo principal funciona.
-4. Si se cambio Convex o reglas de reservas, probar casos de solape, cancelacion, bloqueo y duracion cuando aplique.
-5. Reportar en lenguaje claro que se cambio y que verificacion paso.
+Para cambios solo de documentacion, confirma que el archivo existe, tiene contenido completo y no supera el largo acordado.
 
 ## Problemas comunes
 
-- Si no hay datos, correr `npx convex run seed:seedDemoData`.
-- Si la app no conecta a Convex, revisar `.env.local` y que `npx convex dev` este activo.
-- Si TypeScript no reconoce funciones de Convex, regenerar tipos con `npx convex dev`.
-- Si una ruta dinamica falla por params, recordar que en esta version se usan como Promise en las pages.
-- Si una reserva parece disponible en UI pero falla al guardar, confiar en la validacion de Convex: probablemente hubo solape o cambio de disponibilidad.
+- Sin datos demo: `npx convex run seed:seedDemoData --args '{"seedToken":"..."}'`.
+- App sin conexion: revisar `.env.local` y `npx convex dev`.
+- Tipos de Convex desactualizados: correr `npx convex dev`.
+- Error en rutas dinamicas: revisar `params` y `searchParams` como Promises.
+- UI muestra disponible pero guardar falla: confiar en Convex; probablemente hubo solape, slot pasado o cambio de disponibilidad.
