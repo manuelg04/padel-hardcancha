@@ -1,8 +1,17 @@
 "use client";
 
-import { Check, Pencil, Plus, Save } from "lucide-react";
+import {
+  Check,
+  Crown,
+  Pencil,
+  Plus,
+  Power,
+  PowerOff,
+  Save,
+  Sparkles,
+} from "lucide-react";
 import { useMutation } from "convex/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -69,6 +78,13 @@ function describeSchedule(plan: Doc<"membershipPlans">) {
   return `${days} · ${time}`;
 }
 
+function scrollToForm() {
+  document.getElementById("membership-plan-form")?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+}
+
 export function MembershipPlansPanel({
   clubId,
   plans,
@@ -96,6 +112,13 @@ export function MembershipPlansPanel({
   const [validEndTime, setValidEndTime] = useState("18:00");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [onlyActive, setOnlyActive] = useState(true);
+
+  const activePlansCount = plans.filter((plan) => plan.isActive).length;
+  const visiblePlans = useMemo(
+    () => (onlyActive ? plans.filter((plan) => plan.isActive) : plans),
+    [onlyActive, plans],
+  );
 
   function loadPlan(plan: Doc<"membershipPlans">) {
     setEditingPlan(plan);
@@ -110,6 +133,7 @@ export function MembershipPlansPanel({
     setValidStartTime(plan.validStartTime ?? "06:00");
     setValidEndTime(plan.validEndTime ?? "18:00");
     setError("");
+    window.requestAnimationFrame(scrollToForm);
   }
 
   function resetForm() {
@@ -180,105 +204,163 @@ export function MembershipPlansPanel({
   }
 
   return (
-    <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-black">Planes</h2>
-          <p className="text-sm text-[var(--ink-500)]">
-            {plans.filter((plan) => plan.isActive).length} activos
-          </p>
+    <section className="space-y-5">
+      <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]">
+        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-black">Planes</h2>
+            <p className="text-sm text-[var(--ink-500)]">
+              Gestiona los planes y beneficios disponibles.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-black text-[var(--ink-700)]">
+              Solo activos
+              <button
+                aria-pressed={onlyActive}
+                className={`relative h-6 w-11 rounded-full border transition ${
+                  onlyActive
+                    ? "border-[var(--court-600)] bg-[var(--court-500)]"
+                    : "border-[var(--ink-300)] bg-[var(--ink-200)]"
+                }`}
+                onClick={() => setOnlyActive((current) => !current)}
+                type="button"
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-[var(--shadow-sm)] transition ${
+                    onlyActive ? "left-5" : "left-0.5"
+                  }`}
+                />
+              </button>
+            </label>
+            {!canManage ? <span className="pill pill-pending">Solo consulta</span> : null}
+          </div>
         </div>
-        {!canManage ? (
-          <span className="pill pill-pending">Solo consulta</span>
-        ) : null}
-      </div>
 
-      <div className="space-y-3">
-        {plans.length === 0 ? (
-          <p className="rounded-[var(--r-md)] border border-dashed border-[var(--ink-300)] p-4 text-sm font-bold text-[var(--ink-500)]">
-            Aun no hay planes de membresia.
-          </p>
-        ) : (
-          plans.map((plan) => (
-            <article
-              key={plan._id}
-              className="rounded-[var(--r-md)] border border-[var(--ink-200)] p-4"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <h3 className="font-black">{plan.name}</h3>
+        <div className="space-y-3">
+          {plans.length === 0 ? (
+            <p className="rounded-[var(--r-md)] border border-dashed border-[var(--ink-300)] bg-[var(--ink-50)] p-5 text-sm font-bold text-[var(--ink-500)]">
+              Aun no hay planes de membresía.
+            </p>
+          ) : visiblePlans.length === 0 ? (
+            <p className="rounded-[var(--r-md)] border border-dashed border-[var(--ink-300)] bg-[var(--ink-50)] p-5 text-sm font-bold text-[var(--ink-500)]">
+              No hay planes activos para mostrar.
+            </p>
+          ) : (
+            visiblePlans.map((plan) => (
+              <article
+                key={plan._id}
+                className="rounded-[var(--r-md)] border border-[var(--ink-200)] bg-white p-4 shadow-[var(--shadow-sm)] transition hover:border-[var(--ink-300)]"
+              >
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="flex min-w-0 gap-4">
                     <span
-                      className={`pill ${
-                        plan.isActive ? "pill-available" : "pill-blocked"
+                      className={`grid h-12 w-12 shrink-0 place-items-center rounded-full ${
+                        plan.isActive
+                          ? "bg-[var(--court-100)] text-[var(--court-700)]"
+                          : "bg-[var(--ink-100)] text-[var(--ink-600)]"
                       }`}
                     >
-                      <span className="dot" />
-                      {plan.isActive ? "Activo" : "Inactivo"}
+                      {plan.isActive ? <Crown size={22} /> : <Sparkles size={22} />}
                     </span>
+                    <div className="min-w-0">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <h3 className="font-black">{plan.name}</h3>
+                        <span
+                          className={`pill ${
+                            plan.isActive ? "pill-available" : "pill-blocked"
+                          }`}
+                        >
+                          {plan.isActive ? "Activo" : "Inactivo"}
+                        </span>
+                      </div>
+                      <p className="text-sm font-bold text-[var(--ink-800)]">
+                        Beneficio: {benefitLabels[plan.benefitType]} ·{" "}
+                        {describeBenefit(plan)}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--ink-500)]">
+                        {describeSchedule(plan)}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--ink-500)]">
+                        Mensualidad:{" "}
+                        {plan.monthlyPrice !== undefined
+                          ? formatCOP(plan.monthlyPrice)
+                          : "Sin mensualidad"}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-sm font-bold text-[var(--ink-700)]">
-                    {benefitLabels[plan.benefitType]} · {describeBenefit(plan)}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--ink-500)]">
-                    {describeSchedule(plan)}
-                  </p>
-                  {plan.monthlyPrice !== undefined ? (
-                    <p className="mt-1 text-sm text-[var(--ink-500)]">
-                      Mensualidad: {formatCOP(plan.monthlyPrice)}
-                    </p>
+                  {canManage ? (
+                    <div className="flex shrink-0 flex-wrap gap-2 md:justify-end">
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => loadPlan(plan)}
+                      >
+                        <Pencil size={16} />
+                        Editar
+                      </button>
+                      <button
+                        className={plan.isActive ? "btn btn-danger" : "btn btn-primary"}
+                        type="button"
+                        onClick={() =>
+                          setPlanActive({
+                            membershipPlanId: plan._id,
+                            isActive: !plan.isActive,
+                          })
+                        }
+                      >
+                        {plan.isActive ? <PowerOff size={16} /> : <Power size={16} />}
+                        {plan.isActive ? "Desactivar" : "Activar"}
+                      </button>
+                    </div>
                   ) : null}
                 </div>
-                {canManage ? (
-                  <div className="flex gap-2">
-                    <button
-                      className="btn btn-ghost"
-                      type="button"
-                      onClick={() => loadPlan(plan)}
-                    >
-                      <Pencil size={16} />
-                      Editar
-                    </button>
-                    <button
-                      className={plan.isActive ? "btn btn-danger" : "btn btn-primary"}
-                      type="button"
-                      onClick={() =>
-                        setPlanActive({
-                          membershipPlanId: plan._id,
-                          isActive: !plan.isActive,
-                        })
-                      }
-                    >
-                      {plan.isActive ? "Desactivar" : "Activar"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </article>
-          ))
-        )}
-      </div>
+              </article>
+            ))
+          )}
+        </div>
+
+        {plans.length > activePlansCount && onlyActive ? (
+          <button
+            className="mx-auto mt-4 flex text-sm font-bold text-[var(--ink-600)] hover:text-[var(--ink-900)]"
+            onClick={() => setOnlyActive(false)}
+            type="button"
+          >
+            Ver planes inactivos ({plans.length - activePlansCount})
+          </button>
+        ) : null}
+      </section>
 
       {canManage ? (
         <form
-          className="mt-5 rounded-[var(--r-lg)] border border-dashed border-[var(--ink-300)] bg-[var(--ink-50)] p-4"
+          id="membership-plan-form"
+          className="scroll-mt-6 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]"
           onSubmit={savePlan}
         >
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="font-black">
-              {editingPlan ? "Editar plan" : "Crear plan"}
-            </p>
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-black">
+                {editingPlan ? "Editar plan" : "Nuevo plan"}
+              </h2>
+              <p className="text-sm text-[var(--ink-500)]">
+                {editingPlan
+                  ? "Actualiza la información del plan seleccionado."
+                  : "Crea un nuevo plan de membresía."}
+              </p>
+            </div>
             {editingPlan ? (
-              <button className="btn btn-ghost" type="button" onClick={resetForm}>
-                Nuevo
-              </button>
+              <span className="pill pill-pending">Editando</span>
             ) : null}
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="field">
-              <label>Nombre</label>
-              <input value={name} onChange={(event) => setName(event.target.value)} />
+              <label>Nombre del plan</label>
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Ej. Plan mensual"
+              />
             </div>
             <div className="field">
               <label>Mensualidad</label>
@@ -287,13 +369,7 @@ export function MembershipPlansPanel({
                 min="0"
                 value={monthlyPrice}
                 onChange={(event) => setMonthlyPrice(event.target.value)}
-              />
-            </div>
-            <div className="field md:col-span-2">
-              <label>Descripcion</label>
-              <input
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Ej. 150000"
               />
             </div>
             <div className="field">
@@ -307,49 +383,68 @@ export function MembershipPlansPanel({
                 <option value="fixed_price">Precio fijo</option>
               </select>
             </div>
-            {benefitType === "percentage_discount" ? (
-              <div className="field">
-                <label>Descuento</label>
+            <div className="field md:col-span-2">
+              <label>Descripción opcional</label>
+              <textarea
+                className="min-h-20 resize-none"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Describe los beneficios principales de este plan"
+              />
+            </div>
+            <div className="grid gap-3">
+              {benefitType === "percentage_discount" ? (
+                <div className="field">
+                  <label>Descuento</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={discountPercent}
+                    onChange={(event) => setDiscountPercent(event.target.value)}
+                    placeholder="Ej. 20"
+                  />
+                </div>
+              ) : null}
+              {benefitType === "fixed_price" ? (
+                <div className="field">
+                  <label>Precio fijo</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={fixedPrice}
+                    onChange={(event) => setFixedPrice(event.target.value)}
+                    placeholder="Ej. 25000"
+                  />
+                </div>
+              ) : null}
+              <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold">
                 <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={discountPercent}
-                  onChange={(event) => setDiscountPercent(event.target.value)}
+                  className="mt-1 accent-[var(--court-500)]"
+                  type="checkbox"
+                  checked={appliesAlways}
+                  onChange={(event) => setAppliesAlways(event.target.checked)}
                 />
-              </div>
-            ) : null}
-            {benefitType === "fixed_price" ? (
-              <div className="field">
-                <label>Precio fijo</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={fixedPrice}
-                  onChange={(event) => setFixedPrice(event.target.value)}
-                />
-              </div>
-            ) : null}
+                <span>
+                  Aplica siempre
+                  <span className="block text-xs font-medium text-[var(--ink-500)]">
+                    Este plan estará disponible para todos los clientes.
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
 
-          <label className="mt-4 flex items-center gap-2 text-sm font-bold">
-            <input
-              type="checkbox"
-              checked={appliesAlways}
-              onChange={(event) => setAppliesAlways(event.target.checked)}
-            />
-            Aplica siempre
-          </label>
-
           {!appliesAlways ? (
-            <div className="mt-4 grid gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-white p-3">
+            <div className="mt-4 grid gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4">
               <div className="flex flex-wrap gap-2">
                 {dayOptions.map((day) => (
                   <label
                     key={day.value}
-                    className="flex items-center gap-2 rounded-full border border-[var(--ink-200)] px-3 py-2 text-sm font-bold"
+                    className="flex items-center gap-2 rounded-full border border-[var(--ink-200)] bg-white px-3 py-2 text-sm font-bold"
                   >
                     <input
+                      className="accent-[var(--court-500)]"
                       type="checkbox"
                       checked={validDaysOfWeek.includes(day.value)}
                       onChange={(event) =>
@@ -386,15 +481,20 @@ export function MembershipPlansPanel({
           ) : null}
 
           {error ? (
-            <p className="mt-3 rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
+            <p className="mt-4 rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
               {error}
             </p>
           ) : null}
 
-          <button className="btn btn-dark mt-4" type="submit">
-            {saved ? <Check size={17} /> : editingPlan ? <Save size={17} /> : <Plus size={17} />}
-            {saved ? "Guardado" : editingPlan ? "Guardar plan" : "Crear plan"}
-          </button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button className="btn btn-primary" type="submit">
+              {saved ? <Check size={17} /> : editingPlan ? <Save size={17} /> : <Plus size={17} />}
+              {saved ? "Guardado" : "Guardar plan"}
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={resetForm}>
+              Cancelar
+            </button>
+          </div>
         </form>
       ) : null}
     </section>
