@@ -5,9 +5,12 @@ import {
   bookingOverlaps,
   BOGOTA_TIMEZONE,
   calculateBookingValue,
+  getBogotaNowParts,
   getLocalDayOfWeek,
+  getPastSlotCutoffMinutes,
   isActiveBookingStatus,
   isSlotAvailableForDuration,
+  isSlotStartBookable,
   SLOT_MINUTES,
 } from "../lib/bookingRules";
 import { buildCustomerUpsert, normalizeCustomerPhone } from "../lib/customerRecords";
@@ -53,6 +56,9 @@ const agendaValidator = v.object({
   openMinutes: v.number(),
   closeMinutes: v.number(),
   isOpen: v.boolean(),
+  currentLocalDate: v.string(),
+  currentMinutes: v.number(),
+  pastSlotCutoffMinutes: v.union(v.number(), v.null()),
   metrics: v.object({
     reservationsToday: v.number(),
     pending: v.number(),
@@ -231,6 +237,13 @@ async function assertCanBook(args: {
     });
   }
 
+  if (!isSlotStartBookable(args.localDate, args.startMinutes)) {
+    throw new ConvexError({
+      code: "PAST_TIME",
+      message: "Este horario ya empezo o ya paso. Elige un horario mas adelante.",
+    });
+  }
+
   const endMinutes = args.startMinutes + args.durationMinutes;
   const existing = await listBookingsForCourtDate(
     args.ctx,
@@ -338,6 +351,7 @@ export const getAvailability = query({
     const bookings = await listBookingsForClubDate(ctx, club._id, args.localDate);
     const openingWindow = getOpeningWindow(club, args.localDate);
     const slots: AvailabilitySlot[] = [];
+    const now = Date.now();
 
     if (!openingWindow.isOpen) {
       return { courts, slots, ...openingWindow };
@@ -351,6 +365,10 @@ export const getAvailability = query({
         startMinutes + args.durationMinutes <= openingWindow.closeMinutes;
         startMinutes += SLOT_MINUTES
       ) {
+        if (!isSlotStartBookable(args.localDate, startMinutes, now)) {
+          continue;
+        }
+
         const endMinutes = startMinutes + args.durationMinutes;
         const overlappingBooking = findOverlappingBooking(
           courtBookings,
@@ -553,6 +571,13 @@ export const listAgendaByDate = query({
       await listBookingsForClubDate(ctx, club._id, args.localDate)
     ).filter((booking) => booking.bookingStatus !== "cancelled");
     const openingWindow = getOpeningWindow(club, args.localDate);
+    const now = Date.now();
+    const current = getBogotaNowParts(now);
+    const pastSlotCutoffMinutes = getPastSlotCutoffMinutes(
+      args.localDate,
+      openingWindow.closeMinutes,
+      now,
+    );
     const visibleBookings = bookings.sort((a, b) => {
       if (a.startMinutes !== b.startMinutes) {
         return a.startMinutes - b.startMinutes;
@@ -607,6 +632,9 @@ export const listAgendaByDate = query({
       bookings: visibleBookings,
       settlements,
       ...openingWindow,
+      currentLocalDate: current.localDate,
+      currentMinutes: current.currentMinutes,
+      pastSlotCutoffMinutes,
       metrics: {
         reservationsToday: revenueBookings.length,
         pending: revenueBookings.filter(

@@ -50,6 +50,7 @@ export function ReserveClient({ slug }: { slug: string }) {
     court,
     slots: availability.slots.filter((slot) => slot.courtId === court._id),
   }));
+  const hasVisibleSlots = availability.slots.length > 0;
 
   return (
     <PlayerShell>
@@ -106,6 +107,10 @@ export function ReserveClient({ slug }: { slug: string }) {
         {!availability.isOpen ? (
           <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] p-5 text-center">
             <p className="font-bold">El club no abre esta fecha.</p>
+          </div>
+        ) : !hasVisibleSlots ? (
+          <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] p-5 text-center">
+            <p className="font-bold">No quedan horarios disponibles para esta fecha.</p>
           </div>
         ) : (
           <div className="space-y-5">

@@ -8,8 +8,10 @@ import {
 import {
   bookingOverlaps,
   calculateBookingValue,
+  getNextBookableSlotStartMinutes,
   getLocalDayOfWeek,
   isSlotAvailableForDuration,
+  isSlotStartBookable,
 } from "../lib/bookingRules";
 
 const pricing = {
@@ -63,6 +65,85 @@ describe("availability rules", () => {
       false,
     );
     expect(isSlotAvailableForDuration(8 * 60, 120, activeBookings)).toBe(true);
+  });
+});
+
+describe("past-time cutoff rules", () => {
+  const mondayAtSixFifteenBogota = new Date("2026-05-04T23:15:00.000Z");
+  const mondayAtSixBogota = new Date("2026-05-04T23:00:00.000Z");
+
+  it("blocks same-day slots that already started and allows the next slot", () => {
+    expect(
+      isSlotStartBookable(
+        "2026-05-04",
+        18 * 60,
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(false);
+    expect(
+      isSlotStartBookable(
+        "2026-05-04",
+        17 * 60,
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(false);
+    expect(
+      isSlotStartBookable(
+        "2026-05-04",
+        19 * 60,
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(true);
+  });
+
+  it("blocks the slot that starts exactly at the current time", () => {
+    expect(
+      isSlotStartBookable("2026-05-04", 18 * 60, mondayAtSixBogota),
+    ).toBe(false);
+    expect(
+      getNextBookableSlotStartMinutes(
+        6 * 60,
+        23 * 60,
+        "2026-05-04",
+        mondayAtSixBogota,
+      ),
+    ).toBe(19 * 60);
+  });
+
+  it("does not block future dates based on today's current time", () => {
+    expect(
+      isSlotStartBookable(
+        "2026-05-05",
+        6 * 60,
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(true);
+    expect(
+      getNextBookableSlotStartMinutes(
+        6 * 60,
+        23 * 60,
+        "2026-05-05",
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(6 * 60);
+  });
+
+  it("blocks all slots on dates before today", () => {
+    expect(
+      isSlotStartBookable(
+        "2026-05-03",
+        22 * 60,
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(false);
+    expect(
+      getNextBookableSlotStartMinutes(
+        6 * 60,
+        23 * 60,
+        "2026-05-03",
+        mondayAtSixFifteenBogota,
+      ),
+    ).toBe(null);
   });
 });
 

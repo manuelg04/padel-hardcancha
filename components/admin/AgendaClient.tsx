@@ -12,7 +12,7 @@ import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import { calculateBookingValue } from "@/lib/bookingRules";
+import { calculateBookingValue, SLOT_MINUTES } from "@/lib/bookingRules";
 import {
   formatDateLong,
   getHourRows,
@@ -199,6 +199,7 @@ export function AgendaClient() {
               onEmptySlot={(defaults) => setModalDefaults(defaults)}
               onBooking={(booking) => setSelectedBookingId(booking._id)}
               localDate={localDate}
+              pastSlotCutoffMinutes={agenda.pastSlotCutoffMinutes}
             />
 
             {modalDefaults ? (
@@ -206,6 +207,10 @@ export function AgendaClient() {
                 defaults={modalDefaults}
                 courts={agenda.courts}
                 pricing={agenda.club.pricing}
+                openMinutes={agenda.openMinutes}
+                closeMinutes={agenda.closeMinutes}
+                currentLocalDate={agenda.currentLocalDate}
+                currentMinutes={agenda.currentMinutes}
                 onClose={() => setModalDefaults(null)}
               />
             ) : null}
@@ -255,6 +260,7 @@ function AgendaGrid({
   visibleBookingIds,
   settlementsByBookingId,
   localDate,
+  pastSlotCutoffMinutes,
   onEmptySlot,
   onBooking,
 }: {
@@ -265,6 +271,7 @@ function AgendaGrid({
   visibleBookingIds: Set<string>;
   settlementsByBookingId: Map<string, SettlementDoc>;
   localDate: string;
+  pastSlotCutoffMinutes: number | null;
   onEmptySlot: (defaults: ModalDefaults) => void;
   onBooking: (booking: BookingDoc) => void;
 }) {
@@ -364,12 +371,22 @@ function AgendaGrid({
               );
             }
 
+            const isPastEmptySlot =
+              pastSlotCutoffMinutes !== null && hour <= pastSlotCutoffMinutes;
+
             return (
               <button
                 key={`${court._id}-${hour}`}
-                className="m-1 rounded-[var(--r-md)] border border-[var(--ink-100)] bg-[var(--ink-50)] text-left text-xs font-bold text-[var(--ink-400)] hover:border-[var(--court-300)] hover:bg-[var(--court-50)] hover:text-[var(--court-700)]"
+                className={`m-1 rounded-[var(--r-md)] border text-left text-xs font-bold ${
+                  isPastEmptySlot
+                    ? "cursor-not-allowed border-[var(--ink-100)] bg-[var(--ink-50)] text-[var(--ink-400)] opacity-45"
+                    : "border-[var(--ink-100)] bg-[var(--ink-50)] text-[var(--ink-400)] hover:border-[var(--court-300)] hover:bg-[var(--court-50)] hover:text-[var(--court-700)]"
+                }`}
+                disabled={isPastEmptySlot}
+                aria-disabled={isPastEmptySlot}
                 style={{ gridColumn: courtIndex + 2, gridRow: rowIndex + 2 }}
                 onClick={() =>
+                  !isPastEmptySlot &&
                   onEmptySlot({
                     courtId: court._id,
                     localDate,
@@ -377,7 +394,9 @@ function AgendaGrid({
                   })
                 }
               >
-                <span className="px-3">Disponible</span>
+                <span className="px-3">
+                  {isPastEmptySlot ? "Pasado" : "Disponible"}
+                </span>
               </button>
             );
           }),
@@ -391,17 +410,33 @@ function ManualBookingModal({
   defaults,
   courts,
   pricing,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
   onClose,
 }: {
   defaults: ModalDefaults;
   courts: CourtDoc[];
   pricing: Doc<"clubs">["pricing"];
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
   onClose: () => void;
 }) {
   const createManualBooking = useMutation(api.bookings.createManualBooking);
   const [courtId, setCourtId] = useState(defaults.courtId ?? courts[0]?._id);
   const [localDate, setLocalDate] = useState(defaults.localDate);
-  const [startMinutes, setStartMinutes] = useState(defaults.startMinutes ?? 17 * 60);
+  const [startMinutes, setStartMinutes] = useState(
+    getInitialManualStartMinutes({
+      defaults,
+      openMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    }),
+  );
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -416,6 +451,13 @@ function ManualBookingModal({
     durationMinutes,
     pricing,
   );
+  const selectedStartIsPast = isPastManualSlot({
+    localDate,
+    startMinutes,
+    closeMinutes,
+    currentLocalDate,
+    currentMinutes,
+  });
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -423,6 +465,11 @@ function ManualBookingModal({
 
     if (!courtId || customerName.trim().length < 3 || customerPhone.trim().length < 7) {
       setError("Completa cancha, cliente y celular.");
+      return;
+    }
+
+    if (selectedStartIsPast) {
+      setError("Este horario ya empezo o ya paso. Elige un horario mas adelante.");
       return;
     }
 
@@ -581,17 +628,135 @@ function ManualBookingModal({
           </p>
         ) : null}
 
+        {selectedStartIsPast ? (
+          <p className="mt-4 rounded-[var(--r-md)] bg-[var(--ink-50)] p-3 text-sm font-bold text-[var(--ink-500)]">
+            Este horario ya empezo o ya paso. Elige un horario mas adelante.
+          </p>
+        ) : null}
+
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancelar
           </button>
-          <button type="submit" className="btn btn-primary">
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={selectedStartIsPast}
+          >
             <Check size={17} />
             Crear reserva
           </button>
         </div>
       </form>
     </div>
+  );
+}
+
+function getPastSlotCutoffFromServerTime({
+  localDate,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  localDate: string;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  if (localDate < currentLocalDate) {
+    return closeMinutes;
+  }
+
+  if (localDate === currentLocalDate) {
+    return currentMinutes;
+  }
+
+  return null;
+}
+
+function isPastManualSlot(args: {
+  localDate: string;
+  startMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  const cutoffMinutes = getPastSlotCutoffFromServerTime(args);
+
+  return cutoffMinutes !== null && args.startMinutes <= cutoffMinutes;
+}
+
+function getNextManualStartMinutes({
+  localDate,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  localDate: string;
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  for (
+    let startMinutes = openMinutes;
+    startMinutes < closeMinutes;
+    startMinutes += SLOT_MINUTES
+  ) {
+    if (
+      !isPastManualSlot({
+        localDate,
+        startMinutes,
+        closeMinutes,
+        currentLocalDate,
+        currentMinutes,
+      })
+    ) {
+      return startMinutes;
+    }
+  }
+
+  return null;
+}
+
+function getInitialManualStartMinutes({
+  defaults,
+  openMinutes,
+  closeMinutes,
+  currentLocalDate,
+  currentMinutes,
+}: {
+  defaults: ModalDefaults;
+  openMinutes: number;
+  closeMinutes: number;
+  currentLocalDate: string;
+  currentMinutes: number;
+}) {
+  if (
+    defaults.startMinutes !== undefined &&
+    !isPastManualSlot({
+      localDate: defaults.localDate,
+      startMinutes: defaults.startMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    })
+  ) {
+    return defaults.startMinutes;
+  }
+
+  return (
+    getNextManualStartMinutes({
+      localDate: defaults.localDate,
+      openMinutes,
+      closeMinutes,
+      currentLocalDate,
+      currentMinutes,
+    }) ??
+    defaults.startMinutes ??
+    openMinutes ??
+    17 * 60
   );
 }
 
