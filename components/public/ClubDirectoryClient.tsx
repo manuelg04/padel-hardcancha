@@ -54,12 +54,16 @@ export function ClubDirectoryClient() {
         </div>
       </header>
 
-      <section className="court-lines text-white">
-        <div className="mx-auto max-w-6xl px-5 py-14 md:py-20">
+      <section
+        className="relative overflow-hidden bg-[var(--court-900)] bg-cover bg-center text-white"
+        style={{ backgroundImage: "url('/images/club-directory-cover.png')" }}
+      >
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(15,19,17,0.9)_0%,rgba(31,55,23,0.78)_42%,rgba(31,55,23,0.36)_100%)]" />
+        <div className="relative mx-auto max-w-6xl px-5 py-14 md:py-20">
           <p className="text-xs font-black uppercase tracking-[0.22em] text-white/60">
             Directorio publico
           </p>
-          <h1 className="text-display mt-4 max-w-3xl text-5xl font-black leading-[0.95] md:text-7xl">
+          <h1 className="text-display mt-4 max-w-[21rem] text-4xl font-black leading-[0.95] sm:max-w-3xl sm:text-5xl md:text-7xl">
             Encuentra tu club de padel
           </h1>
           <p className="mt-5 max-w-xl text-lg text-white/72">
@@ -68,7 +72,7 @@ export function ClubDirectoryClient() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-5 py-6">
+      <section className="relative z-10 mx-auto max-w-6xl px-5 py-6">
         <div className="-mt-14 mb-8 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-4 shadow-[var(--shadow-lg)]">
           <div className="grid gap-3 md:grid-cols-[1fr_260px]">
             <ClubSearch value={search} onChange={setSearch} />

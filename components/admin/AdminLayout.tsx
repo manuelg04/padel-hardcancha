@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BarChart3,
   CalendarDays,
   LogOut,
   Settings,
@@ -18,6 +19,7 @@ import { api } from "@/convex/_generated/api";
 const navItems = [
   { href: "/admin/agenda", label: "Agenda", icon: CalendarDays, active: true },
   { href: "#reservas", label: "Reservas", icon: ClipboardList, active: false },
+  { href: "/admin/metricas", label: "Métricas", icon: BarChart3, active: true },
   { href: "/admin/membresias", label: "Membresias", icon: Users, active: true },
   { href: "/admin/config", label: "Configuración", icon: Settings, active: true },
 ];
