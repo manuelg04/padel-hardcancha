@@ -15,6 +15,7 @@ import type * as clubs from "../clubs.js";
 import type * as courts from "../courts.js";
 import type * as http from "../http.js";
 import type * as memberships from "../memberships.js";
+import type * as metrics from "../metrics.js";
 import type * as seed from "../seed.js";
 import type * as settlements from "../settlements.js";
 import type * as users from "../users.js";
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   courts: typeof courts;
   http: typeof http;
   memberships: typeof memberships;
+  metrics: typeof metrics;
   seed: typeof seed;
   settlements: typeof settlements;
   users: typeof users;

@@ -395,6 +395,7 @@ export function ReserveClient({
                               slot.startMinutes,
                             );
                             const isSelected = selectedSlotKey === key;
+
                             return (
                               <button
                                 key={`${slot.courtId}-${slot.startMinutes}`}
