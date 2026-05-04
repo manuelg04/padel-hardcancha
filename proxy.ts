@@ -4,7 +4,11 @@ import {
   nextjsMiddlewareRedirect,
 } from "@convex-dev/auth/nextjs/server";
 
-const isAdminRoute = createRouteMatcher(["/admin/agenda(.*)", "/admin/config(.*)"]);
+const isAdminRoute = createRouteMatcher([
+  "/admin/agenda(.*)",
+  "/admin/config(.*)",
+  "/admin/metricas(.*)",
+]);
 const isSuperAdminRoute = createRouteMatcher([
   "/super-admin",
   "/super-admin/clubes(.*)",

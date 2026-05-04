@@ -14,6 +14,12 @@ import {
   SLOT_MINUTES,
 } from "../lib/bookingRules";
 import { buildCustomerUpsert, normalizeCustomerPhone } from "../lib/customerRecords";
+import {
+  BOOKING_CODE_RANDOM_BYTES,
+  buildPublicAvailabilitySlot,
+  buildPublicBookingReceipt,
+  formatBookingCode,
+} from "../lib/securityRules";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -42,10 +48,6 @@ const slotValidator = v.object({
   durationMinutes: v.number(),
   value: v.number(),
   isAvailable: v.boolean(),
-  bookingId: v.optional(v.id("bookings")),
-  bookingStatus: v.optional(v.union(v.literal("confirmed"), v.literal("blocked"))),
-  paymentStatus: v.optional(v.union(v.literal("pending"), v.literal("paid"))),
-  customerName: v.optional(v.string()),
 });
 
 const agendaValidator = v.object({
@@ -77,6 +79,18 @@ const playerBookingValidator = v.object({
   clubName: v.string(),
 });
 
+const publicBookingReceiptValidator = v.object({
+  code: v.string(),
+  localDate: v.string(),
+  startMinutes: v.number(),
+  endMinutes: v.number(),
+  durationMinutes: v.number(),
+  value: v.number(),
+  courtName: v.string(),
+  clubName: v.string(),
+  clubWhatsapp: v.string(),
+});
+
 type Ctx = QueryCtx | MutationCtx;
 type AvailabilitySlot = {
   courtId: Id<"courts">;
@@ -88,10 +102,6 @@ type AvailabilitySlot = {
   durationMinutes: number;
   value: number;
   isAvailable: boolean;
-  bookingId?: Id<"bookings">;
-  bookingStatus?: "confirmed" | "blocked";
-  paymentStatus?: "pending" | "paid";
-  customerName?: string;
 };
 
 async function getClubOrThrow(
@@ -259,11 +269,15 @@ async function assertCanBook(args: {
   }
 }
 
-async function buildBookingCode(ctx: MutationCtx, now: number) {
-  const base = now % 100000;
+function generateBookingCodeCandidate() {
+  const bytes = new Uint8Array(BOOKING_CODE_RANDOM_BYTES);
+  crypto.getRandomValues(bytes);
+  return formatBookingCode(bytes);
+}
 
-  for (let offset = 0; offset < 100; offset += 1) {
-    const candidate = `RES-${String(base + offset).padStart(5, "0")}`;
+async function buildBookingCode(ctx: MutationCtx) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = generateBookingCodeCandidate();
     const existing = await ctx.db
       .query("bookings")
       .withIndex("by_code", (q) => q.eq("code", candidate))
@@ -376,7 +390,15 @@ export const getAvailability = query({
           endMinutes,
         );
 
-        slots.push({
+        const isAvailable =
+          !overlappingBooking &&
+          isSlotAvailableForDuration(
+            startMinutes,
+            args.durationMinutes,
+            courtBookings,
+          );
+
+        slots.push(buildPublicAvailabilitySlot({
           courtId: court._id,
           courtName: court.name,
           courtDescription: court.description,
@@ -390,21 +412,8 @@ export const getAvailability = query({
             args.durationMinutes,
             club.pricing,
           ),
-          isAvailable:
-            !overlappingBooking &&
-            isSlotAvailableForDuration(
-              startMinutes,
-              args.durationMinutes,
-              courtBookings,
-            ),
-          bookingId: overlappingBooking?._id,
-          bookingStatus:
-            overlappingBooking?.bookingStatus === "cancelled"
-              ? undefined
-              : overlappingBooking?.bookingStatus,
-          paymentStatus: overlappingBooking?.paymentStatus,
-          customerName: overlappingBooking?.customerName,
-        });
+          isAvailable,
+        }));
       }
     }
 
@@ -441,7 +450,7 @@ export const createOnlineBooking = mutation({
       args.durationMinutes,
       club.pricing,
     );
-    const code = await buildBookingCode(ctx, now);
+    const code = await buildBookingCode(ctx);
     const customerEmail = args.customerEmail?.trim() || auth.user.email;
     const customerId = await upsertCustomer(ctx, {
       clubId: club._id,
@@ -519,7 +528,7 @@ export const createManualBooking = mutation({
       args.durationMinutes,
       club.pricing,
     );
-    const code = await buildBookingCode(ctx, now);
+    const code = await buildBookingCode(ctx);
     const customerId = await upsertCustomer(ctx, {
       clubId: club._id,
       fullName: args.customerName,
@@ -659,15 +668,7 @@ export const listAgendaByDate = query({
 
 export const getBookingByCode = query({
   args: { code: v.string() },
-  returns: v.union(
-    v.null(),
-    v.object({
-      booking: bookingValidator,
-      court: courtValidator,
-      clubName: v.string(),
-      clubWhatsapp: v.string(),
-    }),
-  ),
+  returns: v.union(v.null(), publicBookingReceiptValidator),
   handler: async (ctx, args) => {
     const booking = await ctx.db
       .query("bookings")
@@ -687,12 +688,7 @@ export const getBookingByCode = query({
       return null;
     }
 
-    return {
-      booking,
-      court,
-      clubName: club.name,
-      clubWhatsapp: club.whatsapp,
-    };
+    return buildPublicBookingReceipt({ booking, court, club });
   },
 });
 
