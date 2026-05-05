@@ -12,6 +12,7 @@ import {
   minutesToTime,
 } from "@/lib/dates";
 import { formatCOP } from "@/lib/format";
+import { normalizeMercadoPagoConnectionInput } from "@/lib/mercadoPagoConnectionRules";
 import { AdminLayout } from "./AdminLayout";
 
 type OnlineDepositStatus = {
@@ -126,12 +127,24 @@ function OnlineDepositsForm({
     event.preventDefault();
     setError("");
     setMessage("");
+    const connectionInput = normalizeMercadoPagoConnectionInput({
+      accessToken,
+      collectorId,
+    });
+
+    if (!connectionInput.ok) {
+      setError(connectionInput.message);
+      return;
+    }
 
     try {
-      await connect({
-        accessToken,
-        collectorId: collectorId || undefined,
-      });
+      const { accessToken: normalizedAccessToken, collectorId: normalizedCollectorId } =
+        connectionInput;
+      await connect(
+        normalizedCollectorId
+          ? { accessToken: normalizedAccessToken, collectorId: normalizedCollectorId }
+          : { accessToken: normalizedAccessToken },
+      );
       setAccessToken("");
       setCollectorId("");
       setMessage("Mercado Pago conectado.");

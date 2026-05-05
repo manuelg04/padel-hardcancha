@@ -8,6 +8,7 @@ import {
   estimateMembershipForDeposit,
   normalizeDepositSettings,
 } from "../lib/depositRules";
+import { normalizeMercadoPagoConnectionInput } from "../lib/mercadoPagoConnectionRules";
 import {
   createMercadoPagoDepositPreference,
   getMercadoPagoCheckoutUrl,
@@ -426,12 +427,12 @@ export const connectMercadoPagoAccessToken = mutation({
   handler: async (ctx, args) => {
     const { club } = await getCurrentUserClub(ctx);
     await requireClubAccess(ctx, club._id, ["club_master"]);
-    const accessToken = args.accessToken.trim();
+    const connectionInput = normalizeMercadoPagoConnectionInput(args);
 
-    if (!accessToken) {
+    if (!connectionInput.ok) {
       throw new ConvexError({
         code: "VALIDATION_ERROR",
-        message: "Ingresa el access token de Mercado Pago del club.",
+        message: connectionInput.message,
       });
     }
 
@@ -442,8 +443,10 @@ export const connectMercadoPagoAccessToken = mutation({
       .unique();
     const payload = {
       status: "connected" as const,
-      collectorId: args.collectorId?.trim() || undefined,
-      accessToken,
+      ...(connectionInput.collectorId
+        ? { collectorId: connectionInput.collectorId }
+        : {}),
+      accessToken: connectionInput.accessToken,
       connectedAt: existing?.connectedAt ?? now,
       updatedAt: now,
     };
