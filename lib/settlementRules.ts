@@ -10,6 +10,7 @@ export type SettlementMemberInput = {
   benefitType: MembershipBenefitType;
   discountPercent?: number;
   fixedPrice?: number;
+  waivesDeposit?: boolean;
   appliesAlways: boolean;
   validDaysOfWeek?: number[];
   validStartTime?: string;
@@ -25,6 +26,7 @@ export type SettlementMemberCharge = {
   benefitType: MembershipBenefitType;
   discountPercent?: number;
   fixedPrice?: number;
+  waivesDeposit?: boolean;
   benefitApplied: boolean;
   benefitNotAppliedReason?: "outside_schedule";
   baseShareValue: number;
@@ -140,6 +142,7 @@ const calculateMemberCharge = ({
       benefitType: member.benefitType,
       discountPercent: member.discountPercent,
       fixedPrice: member.fixedPrice,
+      waivesDeposit: member.waivesDeposit,
       benefitApplied: false,
       benefitNotAppliedReason: "outside_schedule",
       baseShareValue,
@@ -190,6 +193,7 @@ const calculateMemberCharge = ({
     benefitType: member.benefitType,
     discountPercent: member.discountPercent,
     fixedPrice: member.fixedPrice,
+    waivesDeposit: member.waivesDeposit,
     benefitApplied: true,
     baseShareValue,
     chargedValue,

@@ -1,21 +1,97 @@
 import { v } from "convex/values";
 
 export const bookingStatusValidator = v.union(
+  v.literal("payment_pending"),
   v.literal("confirmed"),
   v.literal("cancelled"),
+  v.literal("expired"),
   v.literal("blocked"),
 );
 
 export const paymentStatusValidator = v.union(
   v.literal("pending"),
   v.literal("paid"),
+  v.literal("failed"),
+  v.literal("expired"),
+  v.literal("refunded"),
+  v.literal("no_payment_required"),
 );
 
 export const paymentMethodValidator = v.union(
   v.literal("club"),
   v.literal("transfer"),
+  v.literal("mercadopago"),
   v.literal("cash"),
   v.literal("other"),
+);
+
+export const depositModeValidator = v.union(v.literal("optional"));
+
+export const depositTypeValidator = v.union(
+  v.literal("percentage"),
+  v.literal("fixed"),
+);
+
+export const depositStatusValidator = v.union(
+  v.literal("none"),
+  v.literal("pending"),
+  v.literal("paid"),
+  v.literal("failed"),
+  v.literal("refunded"),
+);
+
+export const paymentOptionSelectedValidator = v.union(
+  v.literal("pay_at_club"),
+  v.literal("deposit_online"),
+);
+
+export const reservationPaymentProviderValidator = v.union(
+  v.literal("mercadopago"),
+);
+
+export const paymentProviderEnvironmentValidator = v.union(
+  v.literal("sandbox"),
+  v.literal("production"),
+);
+
+export const reservationPaymentTypeValidator = v.union(v.literal("deposit"));
+
+export const reservationPaymentStatusValidator = v.union(
+  v.literal("created"),
+  v.literal("pending"),
+  v.literal("approved"),
+  v.literal("rejected"),
+  v.literal("cancelled"),
+  v.literal("refunded"),
+  v.literal("failed"),
+  v.literal("superseded"),
+);
+
+export const mercadoPagoConnectionStatusValidator = v.union(
+  v.literal("connected"),
+  v.literal("disconnected"),
+  v.literal("expired"),
+  v.literal("error"),
+);
+
+export const mercadoPagoOAuthStateStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("used"),
+  v.literal("expired"),
+  v.literal("cancelled"),
+);
+
+export const providerPaymentStatusValidator = v.union(
+  v.literal("created"),
+  v.literal("pending"),
+  v.literal("approved"),
+  v.literal("in_process"),
+  v.literal("rejected"),
+  v.literal("cancelled"),
+  v.literal("expired"),
+  v.literal("refunded"),
+  v.literal("charged_back"),
+  v.literal("error"),
 );
 
 export const sourceValidator = v.union(
@@ -107,6 +183,21 @@ const clubFields = {
   isPublished: v.boolean(),
   isFeatured: v.boolean(),
   bookingEnabled: v.boolean(),
+  onlinePaymentsEnabled: v.optional(v.boolean()),
+  onlinePaymentRequired: v.optional(v.boolean()),
+  paymentHoldMinutes: v.optional(v.number()),
+  allowOfflineMercadoPagoMethods: v.optional(v.boolean()),
+  onlineDepositsEnabled: v.optional(v.boolean()),
+  depositMode: v.optional(depositModeValidator),
+  depositType: v.optional(depositTypeValidator),
+  depositPercentage: v.optional(v.number()),
+  depositFixedAmount: v.optional(v.union(v.number(), v.null())),
+  depositMinAmount: v.optional(v.number()),
+  depositMaxAmount: v.optional(v.number()),
+  depositRoundingAmount: v.optional(v.number()),
+  depositApplyAfterMembershipDiscounts: v.optional(v.boolean()),
+  allowPayAtClub: v.optional(v.boolean()),
+  mercadoPagoConnectionStatus: v.optional(mercadoPagoConnectionStatusValidator),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -172,11 +263,25 @@ export const bookingValidator = v.object({
   paymentMethod: paymentMethodValidator,
   paymentStatus: paymentStatusValidator,
   bookingStatus: bookingStatusValidator,
+  paymentId: v.optional(v.id("payments")),
+  paymentProvider: v.optional(reservationPaymentProviderValidator),
+  paymentCheckoutUrl: v.optional(v.string()),
+  paymentExpiresAt: v.optional(v.number()),
   value: v.number(),
+  basePrice: v.optional(v.number()),
+  estimatedMembershipDiscount: v.optional(v.number()),
+  estimatedTotal: v.optional(v.number()),
+  depositSuggestedAmount: v.optional(v.number()),
+  depositPaidAmount: v.optional(v.number()),
+  depositStatus: v.optional(depositStatusValidator),
+  paymentOptionSelected: v.optional(paymentOptionSelectedValidator),
+  estimatedBalanceDue: v.optional(v.number()),
+  membershipSnapshot: v.optional(v.any()),
   internalNote: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
   paidAt: v.optional(v.number()),
+  expiredAt: v.optional(v.number()),
   cancelledAt: v.optional(v.number()),
   cancelReason: v.optional(v.string()),
 });
@@ -223,6 +328,7 @@ export const membershipPlanValidator = v.object({
   benefitType: membershipBenefitTypeValidator,
   discountPercent: v.optional(v.number()),
   fixedPrice: v.optional(v.number()),
+  waivesDeposit: v.optional(v.boolean()),
   appliesAlways: v.boolean(),
   validDaysOfWeek: v.optional(v.array(v.number())),
   validStartTime: v.optional(v.string()),
@@ -257,6 +363,7 @@ export const settlementMemberChargeValidator = v.object({
   benefitType: membershipBenefitTypeValidator,
   discountPercent: v.optional(v.number()),
   fixedPrice: v.optional(v.number()),
+  waivesDeposit: v.optional(v.boolean()),
   benefitApplied: v.boolean(),
   benefitNotAppliedReason: v.optional(v.literal("outside_schedule")),
   baseShareValue: v.number(),
@@ -312,4 +419,29 @@ export const bookingSettlementPreviewValidator = v.object({
   finalTotalCollectedValue: v.number(),
   discountAbsorbedByClubValue: v.number(),
   ruleSnapshot: v.array(v.string()),
+});
+
+export const reservationPaymentValidator = v.object({
+  _id: v.id("reservationPayments"),
+  _creationTime: v.number(),
+  reservationId: v.id("bookings"),
+  clubId: v.id("clubs"),
+  userId: v.optional(v.id("users")),
+  provider: reservationPaymentProviderValidator,
+  type: reservationPaymentTypeValidator,
+  status: reservationPaymentStatusValidator,
+  amount: v.number(),
+  currency: v.string(),
+  mercadoPagoPreferenceId: v.optional(v.string()),
+  mercadoPagoPaymentId: v.optional(v.string()),
+  mercadoPagoStatus: v.optional(v.string()),
+  mercadoPagoStatusDetail: v.optional(v.string()),
+  initPoint: v.optional(v.string()),
+  sandboxInitPoint: v.optional(v.string()),
+  externalReference: v.string(),
+  metadata: v.optional(v.any()),
+  paidAt: v.optional(v.number()),
+  rawProviderResponse: v.optional(v.any()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 });

@@ -7,12 +7,23 @@ import {
   bookingStatusValidator,
   clubUserRoleValidator,
   customerMembershipStatusValidator,
+  depositModeValidator,
+  depositStatusValidator,
+  depositTypeValidator,
+  mercadoPagoConnectionStatusValidator,
+  mercadoPagoOAuthStateStatusValidator,
   membershipBenefitTypeValidator,
   openingHourValidator,
+  paymentOptionSelectedValidator,
   paymentMethodValidator,
+  paymentProviderEnvironmentValidator,
   paymentStatusValidator,
   platformRoleValidator,
+  providerPaymentStatusValidator,
   pricingValidator,
+  reservationPaymentProviderValidator,
+  reservationPaymentStatusValidator,
+  reservationPaymentTypeValidator,
   roleStatusValidator,
   settlementMemberChargeValidator,
   sourceValidator,
@@ -97,6 +108,21 @@ export default defineSchema({
     isPublished: v.boolean(),
     isFeatured: v.boolean(),
     bookingEnabled: v.boolean(),
+    onlinePaymentsEnabled: v.optional(v.boolean()),
+    onlinePaymentRequired: v.optional(v.boolean()),
+    paymentHoldMinutes: v.optional(v.number()),
+    allowOfflineMercadoPagoMethods: v.optional(v.boolean()),
+    onlineDepositsEnabled: v.optional(v.boolean()),
+    depositMode: v.optional(depositModeValidator),
+    depositType: v.optional(depositTypeValidator),
+    depositPercentage: v.optional(v.number()),
+    depositFixedAmount: v.optional(v.union(v.number(), v.null())),
+    depositMinAmount: v.optional(v.number()),
+    depositMaxAmount: v.optional(v.number()),
+    depositRoundingAmount: v.optional(v.number()),
+    depositApplyAfterMembershipDiscounts: v.optional(v.boolean()),
+    allowPayAtClub: v.optional(v.boolean()),
+    mercadoPagoConnectionStatus: v.optional(mercadoPagoConnectionStatusValidator),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -125,6 +151,7 @@ export default defineSchema({
     benefitType: membershipBenefitTypeValidator,
     discountPercent: v.optional(v.number()),
     fixedPrice: v.optional(v.number()),
+    waivesDeposit: v.optional(v.boolean()),
     appliesAlways: v.boolean(),
     validDaysOfWeek: v.optional(v.array(v.number())),
     validStartTime: v.optional(v.string()),
@@ -205,11 +232,25 @@ export default defineSchema({
     paymentMethod: paymentMethodValidator,
     paymentStatus: paymentStatusValidator,
     bookingStatus: bookingStatusValidator,
+    paymentId: v.optional(v.id("payments")),
+    paymentProvider: v.optional(reservationPaymentProviderValidator),
+    paymentCheckoutUrl: v.optional(v.string()),
+    paymentExpiresAt: v.optional(v.number()),
     value: v.number(),
+    basePrice: v.optional(v.number()),
+    estimatedMembershipDiscount: v.optional(v.number()),
+    estimatedTotal: v.optional(v.number()),
+    depositSuggestedAmount: v.optional(v.number()),
+    depositPaidAmount: v.optional(v.number()),
+    depositStatus: v.optional(depositStatusValidator),
+    paymentOptionSelected: v.optional(paymentOptionSelectedValidator),
+    estimatedBalanceDue: v.optional(v.number()),
+    membershipSnapshot: v.optional(v.any()),
     internalNote: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     paidAt: v.optional(v.number()),
+    expiredAt: v.optional(v.number()),
     cancelledAt: v.optional(v.number()),
     cancelReason: v.optional(v.string()),
   })
@@ -217,6 +258,140 @@ export default defineSchema({
     .index("by_court_date", ["courtId", "localDate"])
     .index("by_code", ["code"])
     .index("by_club_status", ["clubId", "bookingStatus"])
+    .index("by_payment_status", ["paymentStatus"])
+    .index("by_payment_expires_at", ["paymentExpiresAt"])
+    .index("by_payment", ["paymentId"])
+    .index("by_deposit_status", ["depositStatus"])
     .index("by_player_user", ["playerUserId"])
     .index("by_created_by", ["createdByUserId"]),
+
+  mercadoPagoConnections: defineTable({
+    clubId: v.id("clubs"),
+    status: mercadoPagoConnectionStatusValidator,
+    environment: v.optional(paymentProviderEnvironmentValidator),
+    collectorId: v.optional(v.string()),
+    accessToken: v.optional(v.string()),
+    accessTokenEncrypted: v.optional(v.string()),
+    refreshTokenEncrypted: v.optional(v.string()),
+    publicKey: v.optional(v.string()),
+    accessTokenExpiresAt: v.optional(v.number()),
+    liveMode: v.optional(v.boolean()),
+    scope: v.optional(v.string()),
+    connectedByUserId: v.optional(v.id("users")),
+    connectedAt: v.optional(v.number()),
+    lastRefreshAt: v.optional(v.number()),
+    disconnectedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_collector", ["collectorId"]),
+
+  mercadoPagoOAuthStates: defineTable({
+    clubId: v.id("clubs"),
+    userId: v.id("users"),
+    state: v.string(),
+    status: mercadoPagoOAuthStateStatusValidator,
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_state", ["state"])
+    .index("by_club", ["clubId"]),
+
+  payments: defineTable({
+    clubId: v.id("clubs"),
+    bookingId: v.id("bookings"),
+    customerId: v.optional(v.id("customers")),
+    playerUserId: v.optional(v.id("users")),
+    provider: reservationPaymentProviderValidator,
+    providerEnvironment: paymentProviderEnvironmentValidator,
+    providerPreferenceId: v.optional(v.string()),
+    providerPaymentId: v.optional(v.string()),
+    providerMerchantOrderId: v.optional(v.string()),
+    providerCollectorId: v.optional(v.string()),
+    externalReference: v.string(),
+    amount: v.number(),
+    currency: v.string(),
+    status: providerPaymentStatusValidator,
+    statusDetail: v.optional(v.string()),
+    checkoutUrl: v.optional(v.string()),
+    sandboxCheckoutUrl: v.optional(v.string()),
+    paymentMethod: v.optional(v.string()),
+    paymentType: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
+    paidAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    refundedAt: v.optional(v.number()),
+    rawLastWebhookEvent: v.optional(v.any()),
+    createdByUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_booking", ["bookingId"])
+    .index("by_club", ["clubId"])
+    .index("by_provider_payment", ["provider", "providerPaymentId"])
+    .index("by_preference", ["providerPreferenceId"])
+    .index("by_external_reference", ["externalReference"])
+    .index("by_status", ["status"]),
+
+  reservationPayments: defineTable({
+    reservationId: v.id("bookings"),
+    clubId: v.id("clubs"),
+    userId: v.optional(v.id("users")),
+    provider: reservationPaymentProviderValidator,
+    type: reservationPaymentTypeValidator,
+    status: reservationPaymentStatusValidator,
+    amount: v.number(),
+    currency: v.string(),
+    mercadoPagoPreferenceId: v.optional(v.string()),
+    mercadoPagoPaymentId: v.optional(v.string()),
+    mercadoPagoStatus: v.optional(v.string()),
+    mercadoPagoStatusDetail: v.optional(v.string()),
+    initPoint: v.optional(v.string()),
+    sandboxInitPoint: v.optional(v.string()),
+    externalReference: v.string(),
+    metadata: v.optional(v.any()),
+    paidAt: v.optional(v.number()),
+    rawProviderResponse: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_reservation", ["reservationId"])
+    .index("by_club", ["clubId"])
+    .index("by_external_reference", ["externalReference"])
+    .index("by_provider_payment", ["provider", "mercadoPagoPaymentId"])
+    .index("by_preference", ["mercadoPagoPreferenceId"])
+    .index("by_status", ["status"]),
+
+  paymentWebhookEvents: defineTable({
+    provider: reservationPaymentProviderValidator,
+    eventId: v.string(),
+    clubId: v.optional(v.id("clubs")),
+    paymentId: v.optional(v.id("payments")),
+    providerPaymentId: v.optional(v.string()),
+    reservationPaymentId: v.optional(v.id("reservationPayments")),
+    mercadoPagoPaymentId: v.optional(v.string()),
+    eventType: v.optional(v.string()),
+    action: v.optional(v.string()),
+    rawPayload: v.any(),
+    processedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_provider_event", ["provider", "eventId"])
+    .index("by_payment", ["reservationPaymentId"])
+    .index("by_mercadopago_payment", ["mercadoPagoPaymentId"]),
+
+  auditLogs: defineTable({
+    clubId: v.optional(v.id("clubs")),
+    userId: v.optional(v.id("users")),
+    action: v.string(),
+    entityType: v.string(),
+    entityId: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_user", ["userId"]),
 });

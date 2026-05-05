@@ -15,6 +15,10 @@ import {
 } from "../lib/bookingRules";
 import { buildCustomerUpsert, normalizeCustomerPhone } from "../lib/customerRecords";
 import {
+  calculateSuggestedDeposit,
+  estimateMembershipForDeposit,
+} from "../lib/depositRules";
+import {
   BOOKING_CODE_RANDOM_BYTES,
   buildPublicAvailabilitySlot,
   buildPublicBookingReceipt,
@@ -35,6 +39,7 @@ import {
   courtValidator,
   paymentMethodValidator,
   paymentStatusValidator,
+  reservationPaymentValidator,
   sourceValidator,
 } from "./validators";
 
@@ -55,6 +60,7 @@ const agendaValidator = v.object({
   courts: v.array(courtValidator),
   bookings: v.array(bookingValidator),
   settlements: v.array(bookingSettlementValidator),
+  reservationPayments: v.array(reservationPaymentValidator),
   openMinutes: v.number(),
   closeMinutes: v.number(),
   isOpen: v.boolean(),
@@ -89,6 +95,14 @@ const publicBookingReceiptValidator = v.object({
   courtName: v.string(),
   clubName: v.string(),
   clubWhatsapp: v.string(),
+  paymentOptionSelected: v.optional(v.string()),
+  estimatedMembershipDiscount: v.optional(v.number()),
+  estimatedTotal: v.optional(v.number()),
+  depositSuggestedAmount: v.optional(v.number()),
+  depositPaidAmount: v.optional(v.number()),
+  depositStatus: v.optional(v.string()),
+  estimatedBalanceDue: v.optional(v.number()),
+  membershipSnapshot: v.optional(v.any()),
 });
 
 type Ctx = QueryCtx | MutationCtx;
@@ -104,7 +118,7 @@ type AvailabilitySlot = {
   isAvailable: boolean;
 };
 
-async function getClubOrThrow(
+export async function getClubOrThrow(
   ctx: Ctx,
   slug: string,
   options?: { requirePublished?: boolean; requireBookingEnabled?: boolean },
@@ -138,7 +152,7 @@ async function getClubOrThrow(
   return club;
 }
 
-async function getCourtOrThrow(ctx: Ctx, courtId: Id<"courts">) {
+export async function getCourtOrThrow(ctx: Ctx, courtId: Id<"courts">) {
   const court = await ctx.db.get(courtId);
 
   if (!court || !court.isActive) {
@@ -215,7 +229,7 @@ function findOverlappingBooking(
   );
 }
 
-async function assertCanBook(args: {
+export async function assertCanBook(args: {
   ctx: MutationCtx;
   club: Doc<"clubs">;
   court: Doc<"courts">;
@@ -275,7 +289,7 @@ function generateBookingCodeCandidate() {
   return formatBookingCode(bytes);
 }
 
-async function buildBookingCode(ctx: MutationCtx) {
+export async function buildBookingCode(ctx: MutationCtx) {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const candidate = generateBookingCodeCandidate();
     const existing = await ctx.db
@@ -294,7 +308,7 @@ async function buildBookingCode(ctx: MutationCtx) {
   });
 }
 
-async function upsertCustomer(
+export async function upsertCustomer(
   ctx: MutationCtx,
   args: {
     clubId: Id<"clubs">;
@@ -341,6 +355,96 @@ async function upsertCustomer(
     clubId: args.clubId,
     ...customer,
   });
+}
+
+async function getActiveMembershipForBookingCustomer(
+  ctx: Ctx,
+  clubId: Id<"clubs">,
+  customerId: Id<"customers">,
+  localDate: string,
+  startMinutes: number,
+) {
+  const memberships = await ctx.db
+    .query("customerMemberships")
+    .withIndex("by_customer_club", (q) =>
+      q.eq("customerId", customerId).eq("clubId", clubId),
+    )
+    .collect();
+  const bookingStart = bookingStartTimestamp(localDate, startMinutes);
+
+  return (
+    memberships.find(
+      (membership) =>
+        membership.status === "active" &&
+        membership.startsAt <= bookingStart &&
+        (membership.endsAt === undefined || membership.endsAt > bookingStart),
+    ) ?? null
+  );
+}
+
+async function buildOnlineBookingDepositSnapshot(args: {
+  ctx: Ctx;
+  club: Doc<"clubs">;
+  customerId: Id<"customers">;
+  localDate: string;
+  startMinutes: number;
+  baseReservationTotal: number;
+}) {
+  const membership = await getActiveMembershipForBookingCustomer(
+    args.ctx,
+    args.club._id,
+    args.customerId,
+    args.localDate,
+    args.startMinutes,
+  );
+  const plan = membership ? await args.ctx.db.get(membership.membershipPlanId) : null;
+  const membershipEstimate = estimateMembershipForDeposit({
+    baseReservationTotal: args.baseReservationTotal,
+    bookingDate: args.localDate,
+    bookingStartMinutes: args.startMinutes,
+    membership:
+      membership && plan && plan.isActive
+        ? {
+            membershipId: membership._id,
+            membershipPlanId: plan._id,
+            membershipPlanName: plan.name,
+            benefitType: plan.benefitType,
+            discountPercent: plan.discountPercent,
+            fixedPrice: plan.fixedPrice,
+            waivesDeposit: plan.waivesDeposit,
+            appliesAlways: plan.appliesAlways,
+            validDaysOfWeek: plan.validDaysOfWeek,
+            validStartTime: plan.validStartTime,
+            validEndTime: plan.validEndTime,
+          }
+        : null,
+  });
+  const deposit = calculateSuggestedDeposit({
+    baseReservationTotal: args.baseReservationTotal,
+    estimatedMembershipDiscount: membershipEstimate.estimatedMembershipDiscount,
+    playerHasDepositWaiver: membershipEstimate.playerHasDepositWaiver,
+    clubDepositSettings: args.club,
+  });
+
+  return {
+    estimatedMembershipDiscount: membershipEstimate.estimatedMembershipDiscount,
+    estimatedTotal: deposit.estimatedPayableTotal,
+    depositSuggestedAmount: deposit.depositAmount,
+    estimatedBalanceDue: deposit.estimatedPayableTotal,
+    membershipSnapshot: membershipEstimate.membershipSnapshot,
+  };
+}
+
+function bookingStartTimestamp(localDate: string, startMinutes: number) {
+  const hours = Math.floor(startMinutes / 60);
+  const minutes = startMinutes % 60;
+
+  return new Date(
+    `${localDate}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(
+      2,
+      "0",
+    )}:00-05:00`,
+  ).getTime();
 }
 
 export const getAvailability = query({
@@ -460,6 +564,14 @@ export const createOnlineBooking = mutation({
       userId: auth.userId,
       source: "online",
     });
+    const depositSnapshot = await buildOnlineBookingDepositSnapshot({
+      ctx,
+      club,
+      customerId,
+      localDate: args.localDate,
+      startMinutes: args.startMinutes,
+      baseReservationTotal: value,
+    });
 
     const bookingId = await ctx.db.insert("bookings", {
       clubId: club._id,
@@ -482,6 +594,15 @@ export const createOnlineBooking = mutation({
       paymentStatus: "pending",
       bookingStatus: "confirmed",
       value,
+      basePrice: value,
+      estimatedMembershipDiscount: depositSnapshot.estimatedMembershipDiscount,
+      estimatedTotal: depositSnapshot.estimatedTotal,
+      depositSuggestedAmount: depositSnapshot.depositSuggestedAmount,
+      depositPaidAmount: 0,
+      depositStatus: "none",
+      paymentOptionSelected: "pay_at_club",
+      estimatedBalanceDue: depositSnapshot.estimatedTotal,
+      membershipSnapshot: depositSnapshot.membershipSnapshot,
       createdAt: now,
       updatedAt: now,
     });
@@ -557,6 +678,14 @@ export const createManualBooking = mutation({
       paymentStatus: args.paymentStatus,
       bookingStatus: "confirmed",
       value,
+      basePrice: value,
+      estimatedMembershipDiscount: 0,
+      estimatedTotal: value,
+      depositSuggestedAmount: 0,
+      depositPaidAmount: 0,
+      depositStatus: "none",
+      paymentOptionSelected: "pay_at_club",
+      estimatedBalanceDue: value,
       internalNote: args.internalNote?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
@@ -621,6 +750,16 @@ export const listAgendaByDate = query({
     const settlementByBookingId = new Map(
       settlements.map((settlement) => [settlement.bookingId, settlement]),
     );
+    const reservationPayments = (
+      await Promise.all(
+        revenueBookings.map((booking) =>
+          ctx.db
+            .query("reservationPayments")
+            .withIndex("by_reservation", (q) => q.eq("reservationId", booking._id))
+            .collect(),
+        ),
+      )
+    ).flat();
     const collectedRevenue = revenueBookings.reduce((total, booking) => {
       const settlement = settlementByBookingId.get(booking._id);
 
@@ -632,6 +771,10 @@ export const listAgendaByDate = query({
         return total + booking.value;
       }
 
+      if ((booking.depositPaidAmount ?? 0) > 0) {
+        return total + (booking.depositPaidAmount ?? 0);
+      }
+
       return total;
     }, 0);
 
@@ -640,6 +783,7 @@ export const listAgendaByDate = query({
       courts,
       bookings: visibleBookings,
       settlements,
+      reservationPayments,
       ...openingWindow,
       currentLocalDate: current.localDate,
       currentMinutes: current.currentMinutes,

@@ -1,10 +1,10 @@
 "use client";
 
-import { AlertCircle, ArrowLeft, Check } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, CreditCard } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -34,7 +34,9 @@ export function ConfirmClient({
   const [paymentMethod, setPaymentMethod] = useState<"club" | "transfer">("club");
   const [error, setError] = useState("");
   const [canReturnToAvailability, setCanReturnToAvailability] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingOption, setSubmittingOption] = useState<
+    "pay_at_club" | "deposit_online" | null
+  >(null);
   const currentUser = useQuery(
     api.users.getCurrentUser,
     isAuthenticated ? {} : "skip",
@@ -51,6 +53,7 @@ export function ConfirmClient({
       : "skip",
   );
   const createBooking = useMutation(api.bookings.createOnlineBooking);
+  const createDepositBooking = useAction(api.payments.createOnlineDepositBooking);
 
   const selectedSlot = useMemo(
     () =>
@@ -73,9 +76,36 @@ export function ConfirmClient({
   const durationLabel = `${durationMinutes / 60} hora${
     durationMinutes > 60 ? "s" : ""
   }`;
+  const depositPreview = useQuery(
+    api.payments.getOnlineDepositPreview,
+    isAuthenticated && courtId && localDate
+      ? {
+          clubSlug: slug,
+          courtId: courtId as Id<"courts">,
+          localDate,
+          startMinutes,
+          durationMinutes,
+          customerPhone: effectivePhone || undefined,
+        }
+      : "skip",
+  );
+  const hasDepositWaiver = Boolean(
+    depositPreview?.onlineDepositsEnabled && depositPreview.playerHasDepositWaiver,
+  );
+  const showDepositChoice = Boolean(
+    depositPreview?.onlineDepositsEnabled &&
+      !depositPreview.playerHasDepositWaiver &&
+      depositPreview.depositSuggestedAmount > 0,
+  );
+  const depositBalanceDue =
+    depositPreview && depositPreview.depositSuggestedAmount > 0
+      ? Math.max(
+          depositPreview.estimatedTotal - depositPreview.depositSuggestedAmount,
+          0,
+        )
+      : 0;
 
-  async function submitBooking(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitBooking(option: "pay_at_club" | "deposit_online") {
     setError("");
     setCanReturnToAvailability(false);
 
@@ -94,26 +124,52 @@ export function ConfirmClient({
     }
 
     try {
-      setIsSubmitting(true);
-      const result = await createBooking({
-        clubSlug: slug,
-        courtId: courtId as Id<"courts">,
-        localDate,
-        startMinutes,
-        durationMinutes,
-        customerName: effectiveName,
-        customerPhone: effectivePhone,
-        customerEmail: effectiveEmail || undefined,
-        paymentMethod,
-      });
-      router.push(`/club/${slug}/reserva/${result.code}`);
+      setSubmittingOption(option);
+      if (option === "deposit_online") {
+        const result = await createDepositBooking({
+          clubSlug: slug,
+          courtId: courtId as Id<"courts">,
+          localDate,
+          startMinutes,
+          durationMinutes,
+          customerName: effectiveName,
+          customerPhone: effectivePhone,
+          customerEmail: effectiveEmail || undefined,
+        });
+
+        if (result.checkoutUrl) {
+          window.location.href = result.checkoutUrl;
+          return;
+        }
+
+        router.push(`/club/${slug}/reserva/${result.code}?payment=failure`);
+        return;
+      } else {
+        const result = await createBooking({
+          clubSlug: slug,
+          courtId: courtId as Id<"courts">,
+          localDate,
+          startMinutes,
+          durationMinutes,
+          customerName: effectiveName,
+          customerPhone: effectivePhone,
+          customerEmail: effectiveEmail || undefined,
+          paymentMethod,
+        });
+        router.push(`/club/${slug}/reserva/${result.code}`);
+      }
     } catch (bookingError) {
       const bookingFailure = getPlayerBookingError(bookingError);
       setError(bookingFailure.message);
       setCanReturnToAvailability(bookingFailure.canReturnToAvailability);
     } finally {
-      setIsSubmitting(false);
+      setSubmittingOption(null);
     }
+  }
+
+  function submitPayAtClub(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitBooking("pay_at_club");
   }
 
   if (isLoading || !isAuthenticated || club === undefined || availability === undefined) {
@@ -209,7 +265,7 @@ export function ConfirmClient({
 
             <form
               className="space-y-4 md:rounded-[var(--r-lg)] md:border md:border-[var(--ink-200)] md:bg-white md:p-5 md:shadow-[var(--shadow-sm)]"
-              onSubmit={submitBooking}
+              onSubmit={submitPayAtClub}
             >
               <div className="field">
                 <label htmlFor="name">Nombre completo</label>
@@ -263,6 +319,43 @@ export function ConfirmClient({
                 </div>
               </div>
 
+              {showDepositChoice ? (
+                <div className="rounded-[var(--r-lg)] border border-[var(--court-200)] bg-[var(--court-50)] p-4">
+                  <p className="mb-3 text-xs font-black uppercase tracking-[0.14em] text-[var(--court-700)]">
+                    Anticipo opcional
+                  </p>
+                  <SummaryRow
+                    label="Total estimado"
+                    value={formatCOP(depositPreview!.estimatedTotal)}
+                  />
+                  {depositPreview!.estimatedMembershipDiscount > 0 ? (
+                    <SummaryRow
+                      label="Descuento membresia"
+                      value={`-${formatCOP(
+                        depositPreview!.estimatedMembershipDiscount,
+                      )}`}
+                    />
+                  ) : null}
+                  <SummaryRow
+                    label="Anticipo sugerido"
+                    value={formatCOP(depositPreview!.depositSuggestedAmount)}
+                  />
+                  <SummaryRow
+                    label="Saldo estimado en club"
+                    value={formatCOP(depositBalanceDue)}
+                  />
+                  <p className="mt-3 text-sm font-bold text-[var(--court-700)]">
+                    El anticipo se descuenta del total de la reserva. El saldo
+                    final se confirma en recepcion.
+                  </p>
+                </div>
+              ) : hasDepositWaiver ? (
+                <div className="rounded-[var(--r-lg)] border border-[var(--court-200)] bg-[var(--court-50)] p-4 text-sm font-bold text-[var(--court-700)]">
+                  <p>Tu membresia te permite reservar sin anticipo.</p>
+                  <p>El saldo final se liquida en recepcion.</p>
+                </div>
+              ) : null}
+
               {error ? (
                 <div className="rounded-[var(--r-md)] bg-[var(--status-cancelled-bg)] p-3 text-sm font-bold text-[var(--status-cancelled-fg)]">
                   <div className="flex gap-2">
@@ -280,11 +373,36 @@ export function ConfirmClient({
               <button
                 type="submit"
                 className="btn btn-primary btn-block"
-                disabled={!formValid || selectedSlotUnavailable || isSubmitting}
+                disabled={
+                  !formValid ||
+                  selectedSlotUnavailable ||
+                  submittingOption !== null
+                }
               >
                 <Check size={17} />
-                {isSubmitting ? "Confirmando..." : "Confirmar reserva"}
+                {submittingOption === "pay_at_club"
+                  ? "Confirmando..."
+                  : showDepositChoice || hasDepositWaiver
+                    ? "Reservar sin anticipo"
+                    : "Confirmar reserva"}
               </button>
+              {showDepositChoice ? (
+                <button
+                  type="button"
+                  className="btn btn-dark btn-block"
+                  disabled={
+                    !formValid ||
+                    selectedSlotUnavailable ||
+                    submittingOption !== null
+                  }
+                  onClick={() => void submitBooking("deposit_online")}
+                >
+                  <CreditCard size={17} />
+                  {submittingOption === "deposit_online"
+                    ? "Abriendo Mercado Pago..."
+                    : "Reservar y pagar anticipo"}
+                </button>
+              ) : null}
             </form>
           </div>
         </div>

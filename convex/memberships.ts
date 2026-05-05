@@ -34,6 +34,7 @@ const optionalPlanFields = {
   monthlyPrice: v.optional(v.number()),
   discountPercent: v.optional(v.number()),
   fixedPrice: v.optional(v.number()),
+  waivesDeposit: v.optional(v.boolean()),
   validDaysOfWeek: v.optional(v.array(v.number())),
   validStartTime: v.optional(v.string()),
   validEndTime: v.optional(v.string()),
@@ -122,6 +123,7 @@ function cleanPlanInput(input: {
   benefitType: MembershipBenefitType;
   discountPercent?: number;
   fixedPrice?: number;
+  waivesDeposit?: boolean;
   appliesAlways: boolean;
   validDaysOfWeek?: number[];
   validStartTime?: string;
@@ -147,6 +149,7 @@ function cleanPlanInput(input: {
         : undefined,
     fixedPrice:
       input.benefitType === "fixed_price" ? input.fixedPrice : undefined,
+    waivesDeposit: input.waivesDeposit ?? false,
     appliesAlways: input.appliesAlways,
     validDaysOfWeek:
       validDaysOfWeek && validDaysOfWeek.length > 0 ? validDaysOfWeek : undefined,
@@ -332,6 +335,8 @@ export const updateMembershipPlan = mutation({
           ? args.discountPercent
           : plan.discountPercent,
       fixedPrice: args.fixedPrice !== undefined ? args.fixedPrice : plan.fixedPrice,
+      waivesDeposit:
+        args.waivesDeposit !== undefined ? args.waivesDeposit : plan.waivesDeposit,
       appliesAlways: args.appliesAlways ?? plan.appliesAlways,
       validDaysOfWeek:
         args.validDaysOfWeek !== undefined
