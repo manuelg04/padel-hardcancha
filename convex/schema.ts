@@ -5,6 +5,12 @@ import { authTables } from "@convex-dev/auth/server";
 import {
   bookingSettlementStatusValidator,
   bookingStatusValidator,
+  academyAttendancePaymentStatusValidator,
+  academyAttendanceStatusValidator,
+  academyClassTypeValidator,
+  academyPackageStatusValidator,
+  academyProfessorStatusValidator,
+  academySessionStatusValidator,
   clubUserRoleValidator,
   customerMembershipStatusValidator,
   depositModeValidator,
@@ -211,6 +217,109 @@ export default defineSchema({
     .index("by_booking", ["bookingId"])
     .index("by_club", ["clubId"])
     .index("by_club_status", ["clubId", "status"]),
+
+  academyProfessors: defineTable({
+    clubId: v.id("clubs"),
+    userId: v.optional(v.id("users")),
+    name: v.string(),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    status: academyProfessorStatusValidator,
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_club_status", ["clubId", "status"])
+    .index("by_user", ["userId"]),
+
+  academyPackagePlans: defineTable({
+    clubId: v.id("clubs"),
+    name: v.string(),
+    classesCount: v.number(),
+    price: v.number(),
+    validityDays: v.optional(v.number()),
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_club_active", ["clubId", "active"]),
+
+  academyPackagePurchases: defineTable({
+    clubId: v.id("clubs"),
+    customerId: v.id("customers"),
+    packagePlanId: v.optional(v.id("academyPackagePlans")),
+    name: v.string(),
+    totalClasses: v.number(),
+    usedClasses: v.number(),
+    amountPaid: v.number(),
+    purchasedAt: v.number(),
+    expiresAt: v.optional(v.number()),
+    status: academyPackageStatusValidator,
+    paymentId: v.optional(v.id("payments")),
+    createdByUserId: v.id("users"),
+    updatedByUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    cancelledAt: v.optional(v.number()),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_customer_club", ["customerId", "clubId"])
+    .index("by_club_status", ["clubId", "status"])
+    .index("by_customer_club_status", ["customerId", "clubId", "status"]),
+
+  academyClassSessions: defineTable({
+    clubId: v.id("clubs"),
+    professorId: v.id("academyProfessors"),
+    localDate: v.string(),
+    startTime: v.string(),
+    endTime: v.optional(v.string()),
+    classType: academyClassTypeValidator,
+    notes: v.optional(v.string()),
+    status: academySessionStatusValidator,
+    createdByUserId: v.id("users"),
+    updatedByUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    cancelledAt: v.optional(v.number()),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_club_date", ["clubId", "localDate"])
+    .index("by_club_professor", ["clubId", "professorId"])
+    .index("by_club_status", ["clubId", "status"])
+    .index("by_club_date_professor", ["clubId", "localDate", "professorId"])
+    .index("by_club_date_status", ["clubId", "localDate", "status"]),
+
+  academyClassAttendances: defineTable({
+    clubId: v.id("clubs"),
+    classSessionId: v.id("academyClassSessions"),
+    customerId: v.id("customers"),
+    paymentType: v.union(v.literal("single"), v.literal("package")),
+    singleClassPrice: v.optional(v.number()),
+    packagePurchaseId: v.optional(v.id("academyPackagePurchases")),
+    paymentId: v.optional(v.id("payments")),
+    paymentStatus: academyAttendancePaymentStatusValidator,
+    studentConfirmedAt: v.optional(v.number()),
+    studentConfirmedByUserId: v.optional(v.id("users")),
+    professorValidatedAt: v.optional(v.number()),
+    professorValidatedByUserId: v.optional(v.id("users")),
+    packageConsumedAt: v.optional(v.number()),
+    packageConsumptionRevertedAt: v.optional(v.number()),
+    status: academyAttendanceStatusValidator,
+    notes: v.optional(v.string()),
+    createdByUserId: v.id("users"),
+    updatedByUserId: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    cancelledAt: v.optional(v.number()),
+  })
+    .index("by_club", ["clubId"])
+    .index("by_session", ["classSessionId"])
+    .index("by_club_session", ["clubId", "classSessionId"])
+    .index("by_club_customer", ["clubId", "customerId"])
+    .index("by_club_status", ["clubId", "status"])
+    .index("by_club_customer_status", ["clubId", "customerId", "status"])
+    .index("by_club_session_status", ["clubId", "classSessionId", "status"]),
 
   bookings: defineTable({
     clubId: v.id("clubs"),

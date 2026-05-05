@@ -141,6 +141,49 @@ export const bookingSettlementStatusValidator = v.union(
   v.literal("cancelled"),
 );
 
+export const academyProfessorStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("inactive"),
+);
+
+export const academyPackageStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("exhausted"),
+  v.literal("expired"),
+  v.literal("cancelled"),
+);
+
+export const academySessionStatusValidator = v.union(
+  v.literal("registered"),
+  v.literal("completed"),
+  v.literal("cancelled"),
+);
+
+export const academyAttendanceStatusValidator = v.union(
+  v.literal("registered"),
+  v.literal("student_confirmed"),
+  v.literal("professor_validated"),
+  v.literal("completed"),
+  v.literal("cancelled"),
+);
+
+export const academyPaymentTypeValidator = v.union(
+  v.literal("single"),
+  v.literal("package"),
+);
+
+export const academyAttendancePaymentStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("paid"),
+  v.literal("not_required"),
+);
+
+export const academyClassTypeValidator = v.union(
+  v.literal("private"),
+  v.literal("group"),
+  v.literal("other"),
+);
+
 export const openingHourValidator = v.object({
   dayOfWeek: v.number(),
   isOpen: v.boolean(),
@@ -352,6 +395,97 @@ export const customerMembershipValidator = v.object({
   updatedAt: v.number(),
   cancelledAt: v.optional(v.number()),
   notes: v.optional(v.string()),
+});
+
+export const academyProfessorValidator = v.object({
+  _id: v.id("academyProfessors"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  userId: v.optional(v.id("users")),
+  name: v.string(),
+  email: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  status: academyProfessorStatusValidator,
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+export const academyPackagePlanValidator = v.object({
+  _id: v.id("academyPackagePlans"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  name: v.string(),
+  classesCount: v.number(),
+  price: v.number(),
+  validityDays: v.optional(v.number()),
+  active: v.boolean(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+export const academyPackagePurchaseValidator = v.object({
+  _id: v.id("academyPackagePurchases"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  customerId: v.id("customers"),
+  packagePlanId: v.optional(v.id("academyPackagePlans")),
+  name: v.string(),
+  totalClasses: v.number(),
+  usedClasses: v.number(),
+  amountPaid: v.number(),
+  purchasedAt: v.number(),
+  expiresAt: v.optional(v.number()),
+  status: academyPackageStatusValidator,
+  paymentId: v.optional(v.id("payments")),
+  createdByUserId: v.id("users"),
+  updatedByUserId: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  cancelledAt: v.optional(v.number()),
+});
+
+export const academyClassSessionValidator = v.object({
+  _id: v.id("academyClassSessions"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  professorId: v.id("academyProfessors"),
+  localDate: v.string(),
+  startTime: v.string(),
+  endTime: v.optional(v.string()),
+  classType: academyClassTypeValidator,
+  notes: v.optional(v.string()),
+  status: academySessionStatusValidator,
+  createdByUserId: v.id("users"),
+  updatedByUserId: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  cancelledAt: v.optional(v.number()),
+});
+
+export const academyClassAttendanceValidator = v.object({
+  _id: v.id("academyClassAttendances"),
+  _creationTime: v.number(),
+  clubId: v.id("clubs"),
+  classSessionId: v.id("academyClassSessions"),
+  customerId: v.id("customers"),
+  paymentType: academyPaymentTypeValidator,
+  singleClassPrice: v.optional(v.number()),
+  packagePurchaseId: v.optional(v.id("academyPackagePurchases")),
+  paymentId: v.optional(v.id("payments")),
+  paymentStatus: academyAttendancePaymentStatusValidator,
+  studentConfirmedAt: v.optional(v.number()),
+  studentConfirmedByUserId: v.optional(v.id("users")),
+  professorValidatedAt: v.optional(v.number()),
+  professorValidatedByUserId: v.optional(v.id("users")),
+  packageConsumedAt: v.optional(v.number()),
+  packageConsumptionRevertedAt: v.optional(v.number()),
+  status: academyAttendanceStatusValidator,
+  notes: v.optional(v.string()),
+  createdByUserId: v.id("users"),
+  updatedByUserId: v.optional(v.id("users")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  cancelledAt: v.optional(v.number()),
 });
 
 export const settlementMemberChargeValidator = v.object({
