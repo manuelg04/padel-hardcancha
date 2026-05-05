@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, MessageCircle, Phone } from "lucide-react";
+import { Check, Home, List, MessageCircle, Phone } from "lucide-react";
 import Link from "next/link";
 import { useQuery } from "convex/react";
 
@@ -135,8 +135,19 @@ export function ReservationClient({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
+            <Link className="btn btn-primary btn-block" href={`/club/${slug}`}>
+              <Home size={17} />
+              Volver al club
+            </Link>
+            <Link className="btn btn-ghost btn-block" href="/clubes">
+              <List size={17} />
+              Ver todos los clubes
+            </Link>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <a
-              className="btn btn-primary btn-block"
+              className="btn btn-ghost btn-block"
               href={whatsappUrl(receipt.clubWhatsapp, message)}
               target="_blank"
               rel="noreferrer"
