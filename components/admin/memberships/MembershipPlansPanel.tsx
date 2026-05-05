@@ -27,6 +27,7 @@ type PlanPayload = {
   monthlyPrice?: number;
   discountPercent?: number;
   fixedPrice?: number;
+  waivesDeposit?: boolean;
   validDaysOfWeek?: number[];
   validStartTime?: string;
   validEndTime?: string;
@@ -106,6 +107,7 @@ export function MembershipPlansPanel({
   const [benefitType, setBenefitType] = useState<BenefitType>("free");
   const [discountPercent, setDiscountPercent] = useState("");
   const [fixedPrice, setFixedPrice] = useState("");
+  const [waivesDeposit, setWaivesDeposit] = useState(false);
   const [appliesAlways, setAppliesAlways] = useState(true);
   const [validDaysOfWeek, setValidDaysOfWeek] = useState<number[]>([1, 2, 3, 4, 5]);
   const [validStartTime, setValidStartTime] = useState("06:00");
@@ -128,6 +130,7 @@ export function MembershipPlansPanel({
     setBenefitType(plan.benefitType);
     setDiscountPercent(plan.discountPercent?.toString() ?? "");
     setFixedPrice(plan.fixedPrice?.toString() ?? "");
+    setWaivesDeposit(plan.waivesDeposit ?? false);
     setAppliesAlways(plan.appliesAlways);
     setValidDaysOfWeek(plan.validDaysOfWeek ?? [1, 2, 3, 4, 5]);
     setValidStartTime(plan.validStartTime ?? "06:00");
@@ -144,6 +147,7 @@ export function MembershipPlansPanel({
     setBenefitType("free");
     setDiscountPercent("");
     setFixedPrice("");
+    setWaivesDeposit(false);
     setAppliesAlways(true);
     setValidDaysOfWeek([1, 2, 3, 4, 5]);
     setValidStartTime("06:00");
@@ -156,6 +160,7 @@ export function MembershipPlansPanel({
       name,
       benefitType,
       appliesAlways,
+      waivesDeposit,
     };
     const monthly = optionalNumber(monthlyPrice);
     const discount = optionalNumber(discountPercent);
@@ -281,6 +286,11 @@ export function MembershipPlansPanel({
                       <p className="mt-1 text-sm text-[var(--ink-500)]">
                         {describeSchedule(plan)}
                       </p>
+                      {plan.waivesDeposit ? (
+                        <p className="mt-1 text-sm font-bold text-[var(--court-700)]">
+                          Puede reservar sin anticipo
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-sm text-[var(--ink-500)]">
                         Mensualidad:{" "}
                         {plan.monthlyPrice !== undefined
@@ -429,6 +439,20 @@ export function MembershipPlansPanel({
                   Aplica siempre
                   <span className="block text-xs font-medium text-[var(--ink-500)]">
                     Este plan estará disponible para todos los clientes.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold">
+                <input
+                  className="mt-1 accent-[var(--court-500)]"
+                  type="checkbox"
+                  checked={waivesDeposit}
+                  onChange={(event) => setWaivesDeposit(event.target.checked)}
+                />
+                <span>
+                  Sin anticipo online
+                  <span className="block text-xs font-medium text-[var(--ink-500)]">
+                    Los jugadores con este plan pueden reservar sin anticipo.
                   </span>
                 </span>
               </label>

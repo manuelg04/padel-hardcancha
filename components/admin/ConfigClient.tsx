@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Plus, Save } from "lucide-react";
+import { AlertCircle, Check, CreditCard, PlugZap, Plus, Save } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
@@ -13,6 +13,23 @@ import {
 } from "@/lib/dates";
 import { formatCOP } from "@/lib/format";
 import { AdminLayout } from "./AdminLayout";
+
+type OnlineDepositStatus = {
+  clubId: string;
+  onlineDepositsEnabled: boolean;
+  depositMode: "optional";
+  depositType: "percentage" | "fixed";
+  depositPercentage: number;
+  depositFixedAmount: number | null;
+  depositMinAmount: number;
+  depositMaxAmount: number;
+  depositRoundingAmount: number;
+  depositApplyAfterMembershipDiscounts: boolean;
+  allowPayAtClub: boolean;
+  mercadoPagoConnected: boolean;
+  mercadoPagoConnectionStatus: string;
+  canManageConnection: boolean;
+};
 
 const dayLabels = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -47,11 +64,268 @@ export function ConfigClient() {
         ) : (
           <div className="grid gap-5 xl:grid-cols-[1fr_0.9fr]">
             <ClubSettingsForm key={club.updatedAt} club={club} />
-            <CourtsPanel club={club} courts={courts} />
+            <div className="space-y-5">
+              <OnlineDepositsPanel />
+              <CourtsPanel club={club} courts={courts} />
+            </div>
           </div>
         )}
       </div>
     </AdminLayout>
+  );
+}
+
+function OnlineDepositsPanel() {
+  const status = useQuery(api.payments.getClubMercadoPagoStatus, {});
+
+  if (status === undefined) {
+    return (
+      <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]">
+        <p className="font-bold text-[var(--ink-500)]">Cargando pagos...</p>
+      </section>
+    );
+  }
+
+  return <OnlineDepositsForm key={`${status.clubId}-${status.onlineDepositsEnabled}`} status={status} />;
+}
+
+function OnlineDepositsForm({
+  status,
+}: {
+  status: OnlineDepositStatus;
+}) {
+  const updateSettings = useMutation(api.payments.updateClubDepositSettings);
+  const connect = useMutation(api.payments.connectMercadoPagoAccessToken);
+  const disconnect = useMutation(api.payments.disconnectMercadoPago);
+  const [accessToken, setAccessToken] = useState("");
+  const [collectorId, setCollectorId] = useState("");
+  const [onlineDepositsEnabled, setOnlineDepositsEnabled] = useState(
+    status.onlineDepositsEnabled,
+  );
+  const [depositType, setDepositType] = useState(status.depositType);
+  const [depositPercentage, setDepositPercentage] = useState(
+    status.depositPercentage,
+  );
+  const [depositFixedAmount, setDepositFixedAmount] = useState(
+    status.depositFixedAmount?.toString() ?? "",
+  );
+  const [depositMinAmount, setDepositMinAmount] = useState(status.depositMinAmount);
+  const [depositMaxAmount, setDepositMaxAmount] = useState(status.depositMaxAmount);
+  const [depositRoundingAmount, setDepositRoundingAmount] = useState(
+    status.depositRoundingAmount,
+  );
+  const [
+    depositApplyAfterMembershipDiscounts,
+    setDepositApplyAfterMembershipDiscounts,
+  ] = useState(status.depositApplyAfterMembershipDiscounts);
+  const [allowPayAtClub, setAllowPayAtClub] = useState(status.allowPayAtClub);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function saveConnection(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    try {
+      await connect({
+        accessToken,
+        collectorId: collectorId || undefined,
+      });
+      setAccessToken("");
+      setCollectorId("");
+      setMessage("Mercado Pago conectado.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No pudimos conectar.");
+    }
+  }
+
+  async function saveDepositSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    try {
+      await updateSettings({
+        onlineDepositsEnabled,
+        depositType,
+        depositPercentage: Number(depositPercentage),
+        depositFixedAmount:
+          depositFixedAmount.trim() === "" ? null : Number(depositFixedAmount),
+        depositMinAmount: Number(depositMinAmount),
+        depositMaxAmount: Number(depositMaxAmount),
+        depositRoundingAmount: Number(depositRoundingAmount),
+        depositApplyAfterMembershipDiscounts,
+        allowPayAtClub,
+      });
+      setMessage("Anticipos actualizados.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "No pudimos guardar anticipos.",
+      );
+    }
+  }
+
+  return (
+    <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-black">Anticipos online</h2>
+          <p className="text-sm text-[var(--ink-500)]">
+            Mercado Pago del club y abonos opcionales.
+          </p>
+        </div>
+        <span
+          className={`pill ${
+            status.mercadoPagoConnected ? "pill-available" : "pill-pending"
+          }`}
+        >
+          <span className="dot" />
+          {status.mercadoPagoConnected ? "Conectado" : "Sin conectar"}
+        </span>
+      </div>
+
+      {status.canManageConnection ? (
+        <form className="mb-5 grid gap-3" onSubmit={saveConnection}>
+          <div className="field">
+            <label>Access token del club</label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={accessToken}
+              onChange={(event) => setAccessToken(event.target.value)}
+              placeholder="APP_USR-..."
+            />
+          </div>
+          <div className="field">
+            <label>ID Mercado Pago opcional</label>
+            <input
+              autoComplete="off"
+              value={collectorId}
+              onChange={(event) => setCollectorId(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-dark" type="submit">
+              <PlugZap size={17} />
+              Conectar
+            </button>
+            {status.mercadoPagoConnected ? (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => disconnect()}
+              >
+                Desconectar
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+
+      {!status.mercadoPagoConnected && onlineDepositsEnabled ? (
+        <div className="mb-4 flex gap-2 rounded-[var(--r-md)] bg-[var(--status-pending-bg)] p-3 text-sm font-bold text-[var(--status-pending-fg)]">
+          <AlertCircle size={17} className="mt-0.5 shrink-0" />
+          Conecta Mercado Pago antes de activar anticipos.
+        </div>
+      ) : null}
+
+      <form className="grid gap-4" onSubmit={saveDepositSettings}>
+        <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold">
+          <input
+            className="mt-1 accent-[var(--court-500)]"
+            type="checkbox"
+            checked={onlineDepositsEnabled}
+            onChange={(event) => setOnlineDepositsEnabled(event.target.checked)}
+          />
+          <span>
+            Activar anticipos opcionales
+            <span className="block text-xs font-medium text-[var(--ink-500)]">
+              El jugador siempre puede reservar y pagar en el club.
+            </span>
+          </span>
+        </label>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="field">
+            <label>Tipo</label>
+            <select
+              value={depositType}
+              onChange={(event) =>
+                setDepositType(event.target.value as "percentage" | "fixed")
+              }
+            >
+              <option value="percentage">Porcentaje</option>
+              <option value="fixed">Fijo</option>
+            </select>
+          </div>
+          {depositType === "percentage" ? (
+            <NumberInput
+              label="Porcentaje"
+              suffix="%"
+              value={depositPercentage}
+              onChange={setDepositPercentage}
+            />
+          ) : (
+            <PriceInput
+              label="Valor fijo"
+              value={Number(depositFixedAmount || 0)}
+              onChange={(value) => setDepositFixedAmount(String(value))}
+            />
+          )}
+          <PriceInput
+            label="Minimo"
+            value={depositMinAmount}
+            onChange={setDepositMinAmount}
+          />
+          <PriceInput
+            label="Maximo"
+            value={depositMaxAmount}
+            onChange={setDepositMaxAmount}
+          />
+          <PriceInput
+            label="Redondeo"
+            value={depositRoundingAmount}
+            onChange={setDepositRoundingAmount}
+          />
+        </div>
+
+        <label className="flex items-center gap-2 text-sm font-bold">
+          <input
+            type="checkbox"
+            checked={depositApplyAfterMembershipDiscounts}
+            onChange={(event) =>
+              setDepositApplyAfterMembershipDiscounts(event.target.checked)
+            }
+          />
+          Calcular despues de beneficios de membresia
+        </label>
+        <label className="flex items-center gap-2 text-sm font-bold">
+          <input
+            type="checkbox"
+            checked={allowPayAtClub}
+            onChange={(event) => setAllowPayAtClub(event.target.checked)}
+          />
+          Permitir reservar sin anticipo
+        </label>
+
+        {error ? (
+          <p className="rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
+            {error}
+          </p>
+        ) : null}
+        {message ? (
+          <p className="rounded-[var(--r-md)] bg-[var(--status-paid-bg)] p-3 text-sm font-bold text-[var(--status-paid-fg)]">
+            {message}
+          </p>
+        ) : null}
+
+        <button className="btn btn-primary" type="submit">
+          <CreditCard size={17} />
+          Guardar anticipos
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -222,6 +496,35 @@ function PriceInput({
         onChange={(event) => onChange(Number(event.target.value))}
       />
       <span className="text-xs text-[var(--ink-500)]">{formatCOP(value || 0)}</span>
+    </div>
+  );
+}
+
+function NumberInput({
+  label,
+  suffix,
+  value,
+  onChange,
+}: {
+  label: string;
+  suffix?: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <input
+        type="number"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      {suffix ? (
+        <span className="text-xs text-[var(--ink-500)]">
+          {value || 0}
+          {suffix}
+        </span>
+      ) : null}
     </div>
   );
 }

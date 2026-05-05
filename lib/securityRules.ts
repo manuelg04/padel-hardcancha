@@ -68,6 +68,14 @@ export function buildPublicBookingReceipt({
     endMinutes: number;
     durationMinutes: number;
     value: number;
+    paymentOptionSelected?: string;
+    estimatedMembershipDiscount?: number;
+    estimatedTotal?: number;
+    depositSuggestedAmount?: number;
+    depositPaidAmount?: number;
+    depositStatus?: string;
+    estimatedBalanceDue?: number;
+    membershipSnapshot?: unknown;
   } & Record<string, unknown>;
   court: {
     name: string;
@@ -84,6 +92,14 @@ export function buildPublicBookingReceipt({
     endMinutes: booking.endMinutes,
     durationMinutes: booking.durationMinutes,
     value: booking.value,
+    paymentOptionSelected: booking.paymentOptionSelected,
+    estimatedMembershipDiscount: booking.estimatedMembershipDiscount,
+    estimatedTotal: booking.estimatedTotal,
+    depositSuggestedAmount: booking.depositSuggestedAmount,
+    depositPaidAmount: booking.depositPaidAmount,
+    depositStatus: booking.depositStatus,
+    estimatedBalanceDue: booking.estimatedBalanceDue,
+    membershipSnapshot: booking.membershipSnapshot,
     courtName: court.name,
     clubName: club.name,
     clubWhatsapp: club.whatsapp,
@@ -125,6 +141,31 @@ export function normalizePublicBookingReceiptResponse(
       endMinutes: value.endMinutes,
       durationMinutes: value.durationMinutes,
       value: value.value,
+      paymentOptionSelected:
+        typeof value.paymentOptionSelected === "string"
+          ? value.paymentOptionSelected
+          : undefined,
+      estimatedMembershipDiscount:
+        typeof value.estimatedMembershipDiscount === "number"
+          ? value.estimatedMembershipDiscount
+          : undefined,
+      estimatedTotal:
+        typeof value.estimatedTotal === "number" ? value.estimatedTotal : undefined,
+      depositSuggestedAmount:
+        typeof value.depositSuggestedAmount === "number"
+          ? value.depositSuggestedAmount
+          : undefined,
+      depositPaidAmount:
+        typeof value.depositPaidAmount === "number"
+          ? value.depositPaidAmount
+          : undefined,
+      depositStatus:
+        typeof value.depositStatus === "string" ? value.depositStatus : undefined,
+      estimatedBalanceDue:
+        typeof value.estimatedBalanceDue === "number"
+          ? value.estimatedBalanceDue
+          : undefined,
+      membershipSnapshot: value.membershipSnapshot,
       courtName: value.courtName,
       clubName: value.clubName,
       clubWhatsapp: value.clubWhatsapp,
@@ -158,6 +199,33 @@ export function normalizePublicBookingReceiptResponse(
       endMinutes: booking.endMinutes,
       durationMinutes: booking.durationMinutes,
       value: booking.value,
+      paymentOptionSelected:
+        typeof booking.paymentOptionSelected === "string"
+          ? booking.paymentOptionSelected
+          : undefined,
+      estimatedMembershipDiscount:
+        typeof booking.estimatedMembershipDiscount === "number"
+          ? booking.estimatedMembershipDiscount
+          : undefined,
+      estimatedTotal:
+        typeof booking.estimatedTotal === "number"
+          ? booking.estimatedTotal
+          : undefined,
+      depositSuggestedAmount:
+        typeof booking.depositSuggestedAmount === "number"
+          ? booking.depositSuggestedAmount
+          : undefined,
+      depositPaidAmount:
+        typeof booking.depositPaidAmount === "number"
+          ? booking.depositPaidAmount
+          : undefined,
+      depositStatus:
+        typeof booking.depositStatus === "string" ? booking.depositStatus : undefined,
+      estimatedBalanceDue:
+        typeof booking.estimatedBalanceDue === "number"
+          ? booking.estimatedBalanceDue
+          : undefined,
+      membershipSnapshot: booking.membershipSnapshot,
     },
     court: { name: court.name },
     club: {

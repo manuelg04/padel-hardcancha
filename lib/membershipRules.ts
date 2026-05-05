@@ -16,6 +16,7 @@ type MembershipPlanInput = {
   benefitType: MembershipBenefitType;
   discountPercent?: number;
   fixedPrice?: number;
+  waivesDeposit?: boolean;
   appliesAlways: boolean;
   validDaysOfWeek?: number[];
   validStartTime?: string;

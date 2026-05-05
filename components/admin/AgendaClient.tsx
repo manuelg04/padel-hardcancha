@@ -29,6 +29,7 @@ import { BookingSettlementPanel } from "./agenda/BookingSettlementPanel";
 type BookingDoc = Doc<"bookings">;
 type CourtDoc = Doc<"courts">;
 type SettlementDoc = Doc<"bookingSettlements">;
+type ReservationPaymentDoc = Doc<"reservationPayments">;
 type BookingFilter = "all" | "pending" | "paid" | "blocked";
 type ModalDefaults = {
   courtId?: Id<"courts">;
@@ -57,6 +58,23 @@ export function AgendaClient() {
         settlement,
       ]),
     );
+  }, [agenda]);
+  const reservationPaymentsByBookingId = useMemo(() => {
+    if (!agenda) return new Map<string, ReservationPaymentDoc>();
+    const payments = new Map<string, ReservationPaymentDoc>();
+    const reservationPayments = Array.isArray(agenda.reservationPayments)
+      ? agenda.reservationPayments
+      : [];
+
+    for (const payment of reservationPayments) {
+      const current = payments.get(payment.reservationId);
+      payments.set(
+        payment.reservationId,
+        chooseReservationPayment(current, payment),
+      );
+    }
+
+    return payments;
   }, [agenda]);
   const visibleBookingIds = useMemo(() => {
     if (!agenda) return new Set<string>();
@@ -196,6 +214,7 @@ export function AgendaClient() {
               closeMinutes={agenda.closeMinutes}
               visibleBookingIds={visibleBookingIds}
               settlementsByBookingId={settlementsByBookingId}
+              reservationPaymentsByBookingId={reservationPaymentsByBookingId}
               onEmptySlot={(defaults) => setModalDefaults(defaults)}
               onBooking={(booking) => setSelectedBookingId(booking._id)}
               localDate={localDate}
@@ -221,6 +240,9 @@ export function AgendaClient() {
                 booking={selectedBooking}
                 court={agenda.courts.find((court) => court._id === selectedBooking.courtId)}
                 settlement={settlementsByBookingId.get(selectedBooking._id)}
+                reservationPayment={reservationPaymentsByBookingId.get(
+                  selectedBooking._id,
+                )}
                 clubName={agenda.club.name}
                 onClose={() => setSelectedBookingId(null)}
               />
@@ -259,6 +281,7 @@ function AgendaGrid({
   closeMinutes,
   visibleBookingIds,
   settlementsByBookingId,
+  reservationPaymentsByBookingId,
   localDate,
   pastSlotCutoffMinutes,
   onEmptySlot,
@@ -270,6 +293,7 @@ function AgendaGrid({
   closeMinutes: number;
   visibleBookingIds: Set<string>;
   settlementsByBookingId: Map<string, SettlementDoc>;
+  reservationPaymentsByBookingId: Map<string, ReservationPaymentDoc>;
   localDate: string;
   pastSlotCutoffMinutes: number | null;
   onEmptySlot: (defaults: ModalDefaults) => void;
@@ -328,6 +352,10 @@ function AgendaGrid({
               const span = Math.max(1, startsHere.durationMinutes / 60);
               const visible = visibleBookingIds.has(startsHere._id);
               const settlement = settlementsByBookingId.get(startsHere._id);
+              const depositBadge = depositBadgeForBooking(
+                startsHere,
+                reservationPaymentsByBookingId.get(startsHere._id),
+              );
               const isPaid = settlement
                 ? settlement.status === "paid"
                 : startsHere.paymentStatus === "paid";
@@ -367,6 +395,13 @@ function AgendaGrid({
                               : "Pendiente"
                           }`}
                   </p>
+                  {depositBadge ? (
+                    <span
+                      className={`mt-2 inline-flex rounded-[var(--r-pill)] px-2 py-1 text-[11px] font-black ${depositBadge.className}`}
+                    >
+                      {depositBadge.label}
+                    </span>
+                  ) : null}
                 </button>
               );
             }
@@ -764,12 +799,14 @@ function BookingDetailDrawer({
   booking,
   court,
   settlement,
+  reservationPayment,
   clubName,
   onClose,
 }: {
   booking: BookingDoc;
   court?: CourtDoc;
   settlement?: SettlementDoc;
+  reservationPayment?: ReservationPaymentDoc;
   clubName: string;
   onClose: () => void;
 }) {
@@ -825,12 +862,72 @@ function BookingDetailDrawer({
 
         <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] p-4">
           <Detail label="Cancha" value={court?.name ?? "Cancha"} />
+          <Detail
+            label="Responsable"
+            value={booking.customerName ?? "Sin responsable"}
+          />
+          <Detail
+            label="Membresia activa"
+            value={membershipSnapshotLabel(booking.membershipSnapshot)}
+          />
           <Detail label="Fecha" value={formatDateLong(booking.localDate)} />
           <Detail
             label="Hora"
             value={minutesToRange(booking.startMinutes, booking.endMinutes)}
           />
           <Detail label="Valor cancha" value={formatCOP(booking.value)} />
+          <Detail
+            label="Total estimado"
+            value={formatCOP(booking.estimatedTotal ?? booking.value)}
+          />
+          <Detail
+            label="Descuento estimado"
+            value={formatCOP(booking.estimatedMembershipDiscount ?? 0)}
+          />
+          <Detail
+            label="Anticipo sugerido"
+            value={formatCOP(booking.depositSuggestedAmount ?? 0)}
+          />
+          <Detail
+            label="Anticipo pagado"
+            value={formatCOP(booking.depositPaidAmount ?? 0)}
+          />
+          <Detail
+            label="Saldo estimado"
+            value={formatCOP(
+              booking.estimatedBalanceDue ??
+                booking.estimatedTotal ??
+                booking.value,
+            )}
+          />
+          <Detail
+            label="Estado anticipo"
+            value={
+              depositBadgeForBooking(booking, reservationPayment)?.label ??
+              "Sin anticipo"
+            }
+          />
+          <Detail
+            label="ID pago Mercado Pago"
+            value={
+              reservationPayment?.mercadoPagoPaymentId ??
+              reservationPayment?.mercadoPagoPreferenceId ??
+              "Sin pago"
+            }
+          />
+          <Detail
+            label="Pagado"
+            value={
+              reservationPayment?.paidAt
+                ? new Intl.DateTimeFormat("es-CO", {
+                    day: "numeric",
+                    month: "short",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }).format(new Date(reservationPayment.paidAt))
+                : "Sin pago"
+            }
+          />
           <Detail label="Origen" value={sourceLabel(booking.source)} />
           <Detail
             label="Creada"
@@ -943,6 +1040,93 @@ function StatusBadge({
       <span className="dot" />
       {booking.paymentStatus === "paid" ? "Pagada" : "Pendiente"}
     </span>
+  );
+}
+
+function chooseReservationPayment(
+  current: ReservationPaymentDoc | undefined,
+  next: ReservationPaymentDoc,
+) {
+  if (!current) return next;
+  if (next.status === "approved" && current.status !== "approved") return next;
+  if (current.status === "approved" && next.status !== "approved") return current;
+
+  return (next.updatedAt ?? next.createdAt) > (current.updatedAt ?? current.createdAt)
+    ? next
+    : current;
+}
+
+function depositBadgeForBooking(
+  booking: BookingDoc,
+  payment?: ReservationPaymentDoc,
+) {
+  if (booking.bookingStatus === "blocked") return null;
+
+  const waived = hasDepositWaiverSnapshot(booking.membershipSnapshot);
+  if (waived && booking.paymentOptionSelected !== "deposit_online") {
+    return {
+      label: "Membresia: sin anticipo",
+      className: "bg-[var(--court-50)] text-[var(--court-700)]",
+    };
+  }
+
+  if (booking.depositStatus === "paid") {
+    return {
+      label: `Anticipo ${formatCOP(booking.depositPaidAmount ?? payment?.amount ?? 0)} pagado`,
+      className: "bg-[var(--status-paid-bg)] text-[var(--status-paid-fg)]",
+    };
+  }
+
+  if (booking.depositStatus === "pending") {
+    return {
+      label: "Anticipo pendiente",
+      className: "bg-white/90 text-[var(--status-pending-fg)]",
+    };
+  }
+
+  if (booking.depositStatus === "failed") {
+    return {
+      label: "Anticipo fallido",
+      className: "bg-[var(--status-cancelled-bg)] text-[var(--status-cancelled-fg)]",
+    };
+  }
+
+  if (booking.depositStatus === "refunded") {
+    return {
+      label: "Anticipo reintegrado",
+      className: "bg-[var(--ink-100)] text-[var(--ink-600)]",
+    };
+  }
+
+  return {
+    label: "Sin anticipo",
+    className: "bg-white/80 text-[var(--ink-600)]",
+  };
+}
+
+function membershipSnapshotLabel(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object") return "No registrada";
+
+  const data = snapshot as {
+    applied?: unknown;
+    membershipPlanName?: unknown;
+    waivesDeposit?: unknown;
+  };
+  const planName =
+    typeof data.membershipPlanName === "string" ? data.membershipPlanName : "Membresia";
+
+  if (data.applied === false) return `${planName}, no aplico en este horario`;
+  if (data.waivesDeposit) return `${planName}, sin anticipo`;
+
+  return planName;
+}
+
+function hasDepositWaiverSnapshot(snapshot: unknown) {
+  if (snapshot === null || typeof snapshot !== "object") return false;
+
+  return (
+    "waivesDeposit" in snapshot &&
+    Boolean((snapshot as { waivesDeposit?: unknown }).waivesDeposit)
   );
 }
 

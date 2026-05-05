@@ -12,7 +12,12 @@ export type PricingRules = {
 export type BookingInterval = {
   startMinutes: number;
   endMinutes: number;
-  bookingStatus: "confirmed" | "cancelled" | "blocked";
+  bookingStatus:
+    | "payment_pending"
+    | "confirmed"
+    | "cancelled"
+    | "expired"
+    | "blocked";
 };
 
 export function getLocalDayOfWeek(localDate: string) {
@@ -71,7 +76,7 @@ export function bookingOverlaps(
 }
 
 export function isActiveBookingStatus(status: BookingInterval["bookingStatus"]) {
-  return status === "confirmed" || status === "blocked";
+  return status === "confirmed" || status === "payment_pending" || status === "blocked";
 }
 
 export function isSlotAvailableForDuration(

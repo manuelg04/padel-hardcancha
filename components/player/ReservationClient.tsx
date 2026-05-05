@@ -11,7 +11,15 @@ import { normalizePublicBookingReceiptResponse } from "@/lib/securityRules";
 import { reservationShareMessage, whatsappUrl } from "@/lib/whatsapp";
 import { PlayerShell } from "./PlayerShell";
 
-export function ReservationClient({ slug, code }: { slug: string; code: string }) {
+export function ReservationClient({
+  slug,
+  code,
+  paymentStatusHint,
+}: {
+  slug: string;
+  code: string;
+  paymentStatusHint?: string;
+}) {
   const result = useQuery(api.bookings.getBookingByCode, { code });
 
   if (result === undefined) {
@@ -36,6 +44,15 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
   }
 
   const hour = minutesToRange(receipt.startMinutes, receipt.endMinutes);
+  const paymentMessage = getPaymentMessage(
+    paymentStatusHint,
+    receipt.depositStatus,
+  );
+  const showDepositDetails =
+    (receipt.depositSuggestedAmount ?? 0) > 0 ||
+    (receipt.depositPaidAmount ?? 0) > 0 ||
+    receipt.paymentOptionSelected === "deposit_online" ||
+    hasDepositWaiverSnapshot(receipt.membershipSnapshot);
   const message = reservationShareMessage({
     clubName: receipt.clubName,
     code: receipt.code,
@@ -59,6 +76,12 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
             Te esperamos en {receipt.clubName}.
           </p>
 
+          {paymentMessage ? (
+            <div className="mx-auto mt-5 max-w-xl rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-4 text-sm font-bold text-[var(--ink-700)] shadow-[var(--shadow-sm)]">
+              {paymentMessage}
+            </div>
+          ) : null}
+
           <div className="my-7 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-4 text-left shadow-[var(--shadow-sm)] md:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -76,6 +99,39 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
             <Detail label="Fecha" value={formatDateLong(receipt.localDate)} />
             <Detail label="Hora" value={hour} />
             <Detail label="Valor" value={formatCOP(receipt.value)} />
+            {showDepositDetails ? (
+              <>
+                {receipt.estimatedMembershipDiscount ? (
+                  <Detail
+                    label="Descuento estimado"
+                    value={`-${formatCOP(receipt.estimatedMembershipDiscount)}`}
+                  />
+                ) : null}
+                <Detail
+                  label="Anticipo sugerido"
+                  value={formatCOP(receipt.depositSuggestedAmount ?? 0)}
+                />
+                <Detail
+                  label="Anticipo pagado"
+                  value={formatCOP(receipt.depositPaidAmount ?? 0)}
+                />
+                <Detail
+                  label="Saldo estimado"
+                  value={formatCOP(
+                    receipt.estimatedBalanceDue ??
+                      receipt.estimatedTotal ??
+                      receipt.value,
+                  )}
+                />
+                <Detail
+                  label="Estado anticipo"
+                  value={depositStatusLabel(
+                    receipt.depositStatus,
+                    hasDepositWaiverSnapshot(receipt.membershipSnapshot),
+                  )}
+                />
+              </>
+            ) : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -104,6 +160,43 @@ export function ReservationClient({ slug, code }: { slug: string; code: string }
         </div>
       </div>
     </PlayerShell>
+  );
+}
+
+function getPaymentMessage(payment: string | undefined, depositStatus?: string) {
+  if (payment === "success") {
+    return depositStatus === "paid"
+      ? "Anticipo recibido."
+      : "Estamos confirmando tu anticipo.";
+  }
+
+  if (payment === "pending") {
+    return "Tu pago esta pendiente. La reserva sigue creada.";
+  }
+
+  if (payment === "failure") {
+    return "El pago del anticipo no se completo. Tu reserva sigue creada y puedes pagar en el club.";
+  }
+
+  return "";
+}
+
+function depositStatusLabel(status: string | undefined, waived: boolean) {
+  if (waived) return "Membresia: sin anticipo";
+  if (status === "paid") return "Pagado";
+  if (status === "pending") return "Pendiente";
+  if (status === "failed") return "Fallido";
+  if (status === "refunded") return "Reintegrado";
+
+  return "Sin anticipo";
+}
+
+function hasDepositWaiverSnapshot(snapshot: unknown) {
+  if (snapshot === null || typeof snapshot !== "object") return false;
+
+  return (
+    "waivesDeposit" in snapshot &&
+    Boolean((snapshot as { waivesDeposit?: unknown }).waivesDeposit)
   );
 }
 

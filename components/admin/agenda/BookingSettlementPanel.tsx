@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { calculateFinalBalanceDue } from "@/lib/depositRules";
 import { formatCOP } from "@/lib/format";
 
 type BookingDoc = Doc<"bookings">;
@@ -219,6 +220,11 @@ export function BookingSettlementPanel({
     settlementLocked && settlementView
       ? settlementView.finalTotalCollectedValue
       : calculatedTotalCollectedValue + displayManualAdjustmentAmount;
+  const depositPaidAmount = booking.depositPaidAmount ?? 0;
+  const finalBalanceDue = calculateFinalBalanceDue(
+    finalTotalCollectedValue,
+    depositPaidAmount,
+  );
   const discountAbsorbedByClubValue =
     settlementLocked && settlementView
       ? settlementView.discountAbsorbedByClubValue
@@ -503,6 +509,15 @@ export function BookingSettlementPanel({
         <AmountRow
           label="Total a cobrar"
           value={formatCOP(finalTotalCollectedValue)}
+          strong
+        />
+        <AmountRow
+          label="Anticipo pagado"
+          value={`-${formatCOP(depositPaidAmount)}`}
+        />
+        <AmountRow
+          label="Saldo final"
+          value={formatCOP(finalBalanceDue)}
           strong
         />
         <AmountRow
