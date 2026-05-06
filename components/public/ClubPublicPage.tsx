@@ -70,7 +70,7 @@ export function ClubPublicPage({ slug }: { slug: string }) {
   return (
     <main className="min-h-screen bg-[var(--ink-100)] pb-24 lg:pb-12">
       <header className="sticky top-0 z-30 border-b border-[var(--ink-200)] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8">
           <Link
             href="/clubes"
             className="inline-flex items-center gap-2 text-sm font-black text-[var(--ink-700)] transition hover:text-[var(--court-700)]"
@@ -82,7 +82,7 @@ export function ClubPublicPage({ slug }: { slug: string }) {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6 sm:pt-8 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8 lg:pt-10">
+      <div className="mx-auto max-w-[1400px] px-4 pt-6 sm:px-6 sm:pt-8 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8 lg:px-8 lg:pt-10 2xl:grid-cols-[minmax(0,1fr)_400px] 2xl:gap-12">
         <div className="lg:col-start-1 lg:row-start-1">
           <ClubHero
             club={club}
@@ -130,7 +130,7 @@ export function ClubPublicPage({ slug }: { slug: string }) {
               title="Lo esencial del club"
               description="Solo se muestran datos disponibles en este club."
             />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               <AttributeCard
                 icon={<CalendarDays size={17} />}
                 title={`${activeCourtCount} cancha${
@@ -193,45 +193,47 @@ export function ClubPublicPage({ slug }: { slug: string }) {
               title="Como llegar al club"
               description="Encuentra el club, mira el horario y comunicate por WhatsApp."
             />
-            <article className="overflow-hidden rounded-[var(--r-xl)] border border-[var(--ink-200)] bg-white shadow-[var(--shadow-sm)]">
-              <div className="grid h-44 place-items-center bg-[linear-gradient(135deg,rgba(79,140,51,0.12),rgba(255,255,255,0.72)),repeating-linear-gradient(0deg,transparent_0,transparent_28px,rgba(15,19,17,0.08)_29px),repeating-linear-gradient(90deg,transparent_0,transparent_34px,rgba(15,19,17,0.08)_35px)]">
+            <article className="overflow-hidden rounded-[var(--r-xl)] border border-[var(--ink-200)] bg-white shadow-[var(--shadow-sm)] 2xl:grid 2xl:grid-cols-[1.1fr_minmax(0,1fr)]">
+              <div className="grid h-44 place-items-center bg-[linear-gradient(135deg,rgba(79,140,51,0.12),rgba(255,255,255,0.72)),repeating-linear-gradient(0deg,transparent_0,transparent_28px,rgba(15,19,17,0.08)_29px),repeating-linear-gradient(90deg,transparent_0,transparent_34px,rgba(15,19,17,0.08)_35px)] 2xl:h-full 2xl:min-h-[280px]">
                 <span className="grid h-14 w-14 place-items-center rounded-full bg-[var(--court-600)] text-white shadow-[var(--shadow-md)]">
                   <MapPin size={28} />
                 </span>
               </div>
-              <div className="grid gap-0 sm:grid-cols-3">
-                <ContactCell
-                  icon={<MapPin size={17} />}
-                  label="Direccion"
-                  value={club.address}
-                />
-                <ContactCell
-                  icon={<Clock3 size={17} />}
-                  label="Horario"
-                  value={club.openingHoursText}
-                />
-                <ContactCell
-                  icon={<Phone size={17} />}
-                  label="Contacto"
-                  value={club.whatsapp}
-                />
-              </div>
-              <div className="grid gap-2 border-t border-[var(--ink-200)] bg-[var(--ink-50)] p-4 sm:grid-cols-2">
-                <a
-                  className="btn btn-ghost btn-block"
-                  href={mapHref}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Como llegar
-                  <ArrowUpRight size={16} />
-                </a>
-                <WhatsAppButton
-                  className="btn btn-primary btn-block"
-                  phone={club.whatsapp}
-                  message={whatsappMessage}
-                  label="Contactar por WhatsApp"
-                />
+              <div className="flex flex-col 2xl:border-l 2xl:border-[var(--ink-200)]">
+                <div className="grid grow gap-0 sm:grid-cols-3 2xl:grid-cols-1">
+                  <ContactCell
+                    icon={<MapPin size={17} />}
+                    label="Direccion"
+                    value={club.address}
+                  />
+                  <ContactCell
+                    icon={<Clock3 size={17} />}
+                    label="Horario"
+                    value={club.openingHoursText}
+                  />
+                  <ContactCell
+                    icon={<Phone size={17} />}
+                    label="Contacto"
+                    value={club.whatsapp}
+                  />
+                </div>
+                <div className="grid gap-2 border-t border-[var(--ink-200)] bg-[var(--ink-50)] p-4 sm:grid-cols-2">
+                  <a
+                    className="btn btn-ghost btn-block"
+                    href={mapHref}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Como llegar
+                    <ArrowUpRight size={16} />
+                  </a>
+                  <WhatsAppButton
+                    className="btn btn-primary btn-block"
+                    phone={club.whatsapp}
+                    message={whatsappMessage}
+                    label="Contactar por WhatsApp"
+                  />
+                </div>
               </div>
             </article>
           </section>
@@ -540,7 +542,7 @@ function ContactCell({
   value: string;
 }) {
   return (
-    <div className="flex items-start gap-3 border-b border-[var(--ink-200)] p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+    <div className="flex items-start gap-3 border-b border-[var(--ink-200)] p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 2xl:border-b 2xl:border-r-0 2xl:last:border-b-0">
       <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--court-50)] text-[var(--court-700)]">
         {icon}
       </span>

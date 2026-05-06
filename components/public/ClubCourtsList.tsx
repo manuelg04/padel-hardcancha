@@ -12,7 +12,7 @@ export function ClubCourtsList({ courts }: { courts: Doc<"courts">[] }) {
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
       {courts.map((court) => (
         <article
           key={court._id}
