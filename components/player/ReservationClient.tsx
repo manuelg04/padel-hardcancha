@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Home, List, MessageCircle, Phone } from "lucide-react";
+import { AlertCircle, Check, Home, List, MessageCircle, Phone } from "lucide-react";
 import Link from "next/link";
 import { useQuery } from "convex/react";
 
@@ -47,6 +47,11 @@ export function ReservationClient({
   const paymentMessage = getPaymentMessage(
     paymentStatusHint,
     receipt.depositStatus,
+    receipt.bookingStatus,
+  );
+  const reservationStatusView = getReservationStatusView(
+    receipt.bookingStatus,
+    receipt.paymentStatus,
   );
   const showDepositDetails =
     (receipt.depositSuggestedAmount ?? 0) > 0 ||
@@ -66,14 +71,20 @@ export function ReservationClient({
     <PlayerShell>
       <div className="min-h-full bg-[var(--paper)] px-4 py-8 sm:px-6 md:px-8 md:py-12 lg:px-10">
         <div className="mx-auto w-full max-w-3xl text-center">
-          <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-[var(--status-paid-bg)] text-[var(--court-700)]">
-            <Check size={42} strokeWidth={2.8} />
+          <div
+            className={`mx-auto grid h-20 w-20 place-items-center rounded-full ${reservationStatusView.iconClassName}`}
+          >
+            {reservationStatusView.icon === "check" ? (
+              <Check size={42} strokeWidth={2.8} />
+            ) : (
+              <AlertCircle size={42} strokeWidth={2.8} />
+            )}
           </div>
           <h1 className="text-display mt-6 text-3xl font-black md:text-5xl">
-            ¡Reserva confirmada!
+            {reservationStatusView.title}
           </h1>
           <p className="mt-2 text-[var(--ink-500)]">
-            Te esperamos en {receipt.clubName}.
+            {reservationStatusView.description(receipt.clubName)}
           </p>
 
           {paymentMessage ? (
@@ -90,9 +101,9 @@ export function ReservationClient({
                 </p>
                 <p className="text-mono text-lg font-black">{receipt.code}</p>
               </div>
-              <span className="pill pill-paid">
+              <span className={`pill ${reservationStatusView.badgeClassName}`}>
                 <span className="dot" />
-                Registrada
+                {reservationStatusView.badge}
               </span>
             </div>
             <Detail label="Cancha" value={receipt.courtName} />
@@ -174,19 +185,63 @@ export function ReservationClient({
   );
 }
 
-function getPaymentMessage(payment: string | undefined, depositStatus?: string) {
+function getReservationStatusView(bookingStatus?: string, paymentStatus?: string) {
+  if (bookingStatus === "confirmed") {
+    return {
+      icon: "check" as const,
+      iconClassName: "bg-[var(--status-paid-bg)] text-[var(--court-700)]",
+      title: "¡Reserva confirmada!",
+      description: (clubName: string) => `Te esperamos en ${clubName}.`,
+      badge: "Confirmada",
+      badgeClassName: "pill-paid",
+    };
+  }
+
+  if (
+    bookingStatus === "expired" ||
+    paymentStatus === "failed" ||
+    paymentStatus === "expired"
+  ) {
+    return {
+      icon: "alert" as const,
+      iconClassName:
+        "bg-[var(--status-cancelled-bg)] text-[var(--status-cancelled-fg)]",
+      title: "Pago no confirmado",
+      description: () => "La reserva no queda confirmada sin pago aprobado.",
+      badge: "No confirmada",
+      badgeClassName:
+        "bg-[var(--status-cancelled-bg)] text-[var(--status-cancelled-fg)]",
+    };
+  }
+
+  return {
+    icon: "alert" as const,
+    iconClassName: "bg-[var(--status-pending-bg)] text-[var(--status-pending-fg)]",
+    title: "Pago en proceso",
+    description: () =>
+      "La reserva se confirma cuando Mercado Pago apruebe el pago.",
+    badge: "Pago pendiente",
+    badgeClassName: "bg-[var(--status-pending-bg)] text-[var(--status-pending-fg)]",
+  };
+}
+
+function getPaymentMessage(
+  payment: string | undefined,
+  depositStatus?: string,
+  bookingStatus?: string,
+) {
   if (payment === "success") {
-    return depositStatus === "paid"
-      ? "Anticipo recibido."
-      : "Estamos confirmando tu anticipo.";
+    return depositStatus === "paid" || bookingStatus === "confirmed"
+      ? "Pago online recibido."
+      : "Estamos confirmando tu pago online.";
   }
 
   if (payment === "pending") {
-    return "Tu pago esta pendiente. La reserva sigue creada.";
+    return "Tu pago esta pendiente. La reserva se confirmara cuando Mercado Pago lo apruebe.";
   }
 
   if (payment === "failure") {
-    return "El pago del anticipo no se completo. Tu reserva sigue creada y puedes pagar en el club.";
+    return "El pago online no se completo. La reserva no queda confirmada.";
   }
 
   return "";

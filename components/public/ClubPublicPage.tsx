@@ -207,7 +207,7 @@ export function ClubPublicPage({ slug }: { slug: string }) {
 
             <div className="mt-5 grid gap-2 text-sm text-[var(--ink-600)] sm:grid-cols-3">
               <TrustItem icon={<CalendarDays size={16} />} label="Reserva en pocos pasos" />
-              <TrustItem icon={<CheckCircle2 size={16} />} label="Pago en club o transferencia" />
+              <TrustItem icon={<CheckCircle2 size={16} />} label="Pago online con Mercado Pago" />
               <TrustItem icon={<Phone size={16} />} label="Atencion por WhatsApp" />
             </div>
           </div>
@@ -400,7 +400,7 @@ function ReservationPanel({
       </div>
 
       <div className="mt-5 rounded-[var(--r-lg)] border border-[var(--court-100)] bg-white p-4 text-sm font-bold text-[var(--court-800)]">
-        Sin llamadas: puedes reservar online y elegir pago en club o transferencia.
+        Sin llamadas: puedes reservar online pagando por Mercado Pago.
       </div>
 
       <div className="mt-5 grid gap-2">

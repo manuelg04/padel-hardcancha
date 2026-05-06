@@ -117,6 +117,30 @@ describe("payment transaction calculations", () => {
     });
   });
 
+  test("pending full payments do not add to financial totals or reception balance", () => {
+    expect(
+      calculatePaymentTransactionsKpis([
+        {
+          reservationId: "reservation-1",
+          status: "pending",
+          type: "full_payment",
+          amount: 60000,
+          grossAmount: 60000,
+          totalReservationAmount: 60000,
+        },
+      ]),
+    ).toMatchObject({
+      grossCollectedAmount: 0,
+      gatewayDeductionsAmount: 0,
+      netReceivedAmount: 0,
+      pendingReceptionAmount: 0,
+      transactionCount: 1,
+      approvedPaymentCount: 0,
+      pendingAttemptCount: 1,
+      fullPaymentCount: 1,
+    });
+  });
+
   test("rejected and failed payments do not add to financial totals or reception balance", () => {
     expect(
       calculatePaymentTransactionsKpis([

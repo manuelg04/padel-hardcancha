@@ -68,6 +68,8 @@ export function buildPublicBookingReceipt({
     endMinutes: number;
     durationMinutes: number;
     value: number;
+    bookingStatus?: string;
+    paymentStatus?: string;
     paymentOptionSelected?: string;
     estimatedMembershipDiscount?: number;
     estimatedTotal?: number;
@@ -85,13 +87,15 @@ export function buildPublicBookingReceipt({
     whatsapp: string;
   };
 }) {
-  return {
+  return omitUndefinedFields({
     code: booking.code,
     localDate: booking.localDate,
     startMinutes: booking.startMinutes,
     endMinutes: booking.endMinutes,
     durationMinutes: booking.durationMinutes,
     value: booking.value,
+    bookingStatus: booking.bookingStatus,
+    paymentStatus: booking.paymentStatus,
     paymentOptionSelected: booking.paymentOptionSelected,
     estimatedMembershipDiscount: booking.estimatedMembershipDiscount,
     estimatedTotal: booking.estimatedTotal,
@@ -103,13 +107,19 @@ export function buildPublicBookingReceipt({
     courtName: court.name,
     clubName: club.name,
     clubWhatsapp: club.whatsapp,
-  };
+  });
 }
 
 export type PublicBookingReceipt = ReturnType<typeof buildPublicBookingReceipt>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function omitUndefinedFields<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter((entry) => entry[1] !== undefined),
+  ) as T;
 }
 
 function hasPublicReceiptFields(
@@ -141,6 +151,10 @@ export function normalizePublicBookingReceiptResponse(
       endMinutes: value.endMinutes,
       durationMinutes: value.durationMinutes,
       value: value.value,
+      bookingStatus:
+        typeof value.bookingStatus === "string" ? value.bookingStatus : undefined,
+      paymentStatus:
+        typeof value.paymentStatus === "string" ? value.paymentStatus : undefined,
       paymentOptionSelected:
         typeof value.paymentOptionSelected === "string"
           ? value.paymentOptionSelected
@@ -199,6 +213,14 @@ export function normalizePublicBookingReceiptResponse(
       endMinutes: booking.endMinutes,
       durationMinutes: booking.durationMinutes,
       value: booking.value,
+      bookingStatus:
+        typeof booking.bookingStatus === "string"
+          ? booking.bookingStatus
+          : undefined,
+      paymentStatus:
+        typeof booking.paymentStatus === "string"
+          ? booking.paymentStatus
+          : undefined,
       paymentOptionSelected:
         typeof booking.paymentOptionSelected === "string"
           ? booking.paymentOptionSelected

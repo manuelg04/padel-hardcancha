@@ -81,6 +81,7 @@ describe("security rules", () => {
       endMinutes: 19 * 60,
       durationMinutes: 60,
       value: 70000,
+      paymentStatus: "paid",
       courtName: "Cancha 1",
       clubName: "Match Point",
       clubWhatsapp: "+573001112222",

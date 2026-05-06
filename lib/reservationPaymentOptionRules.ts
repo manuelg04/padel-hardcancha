@@ -1,8 +1,18 @@
+export const PUBLIC_RESERVATION_PAYMENT_TYPES = [
+  "deposit",
+  "full_payment",
+] as const;
+
 export type PublicReservationPaymentType =
-  | "pay_at_club"
-  | "deposit"
-  | "full_payment";
+  (typeof PUBLIC_RESERVATION_PAYMENT_TYPES)[number];
 export type OnlineReservationPaymentType = "deposit" | "full_payment";
+export type PublicReservationPaymentOption = {
+  value: PublicReservationPaymentType;
+  onlineAmount: number;
+  pendingAtReception: number;
+  label: string;
+  description: string;
+};
 export type ReservationPaymentStatus =
   | "created"
   | "pending"
@@ -22,6 +32,16 @@ export type BookingPaymentStatus =
   | "no_payment_required";
 export type BookingStatus = "payment_pending" | "confirmed" | "expired";
 
+export const PUBLIC_ONLINE_PAYMENT_UNAVAILABLE_MESSAGE =
+  "Este club todavía no tiene pagos online disponibles. Por ahora no es posible reservar desde la web. Comunícate con el club para coordinar tu reserva.";
+
+export function getPublicOnlineBookingRequiredError() {
+  return {
+    code: "ONLINE_PAYMENT_REQUIRED",
+    message: "Las reservas online requieren pago.",
+  };
+}
+
 export function calculateReservationDepositAmount(
   totalReservationAmount: number,
 ) {
@@ -37,13 +57,8 @@ export function calculateReservationPaymentBreakdown(
 ) {
   const total = normalizeReservationTotal(totalReservationAmount);
 
-  if (paymentType === "pay_at_club") {
-    return {
-      onlineAmount: 0,
-      pendingAtReception: total,
-      label: "Pago en club",
-      description: "Reserva ahora y paga el total en recepcion.",
-    };
+  if (paymentType !== "deposit" && paymentType !== "full_payment") {
+    throw new Error(getPublicOnlineBookingRequiredError().message);
   }
 
   if (paymentType === "full_payment") {
@@ -65,20 +80,48 @@ export function calculateReservationPaymentBreakdown(
   };
 }
 
+export function getPublicReservationPaymentOptions({
+  total,
+  depositAvailable,
+  fullPaymentAvailable,
+}: {
+  total: number;
+  depositAvailable: boolean;
+  fullPaymentAvailable: boolean;
+}): PublicReservationPaymentOption[] {
+  if (normalizeMoney(total) <= 0) return [];
+
+  const options: PublicReservationPaymentOption[] = [];
+
+  if (depositAvailable) {
+    options.push({
+      value: "deposit",
+      ...calculateReservationPaymentBreakdown(total, "deposit"),
+    });
+  }
+
+  if (fullPaymentAvailable) {
+    options.push({
+      value: "full_payment",
+      ...calculateReservationPaymentBreakdown(total, "full_payment"),
+    });
+  }
+
+  return options;
+}
+
 export function getReservationPaymentSubmitLabel(
   paymentType: PublicReservationPaymentType,
   submitting: boolean,
 ) {
   if (submitting) {
-    return paymentType === "pay_at_club"
-      ? "Confirmando..."
-      : "Abriendo Mercado Pago...";
+    return "Redirigiendo a Mercado Pago...";
   }
 
   if (paymentType === "deposit") return "Abonar y reservar";
-  if (paymentType === "full_payment") return "Pagar completo";
+  if (paymentType === "full_payment") return "Pagar completo y reservar";
 
-  return "Confirmar reserva";
+  throw new Error(getPublicOnlineBookingRequiredError().message);
 }
 
 export function buildReservationPaymentExternalReference(

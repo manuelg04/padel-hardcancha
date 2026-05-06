@@ -185,7 +185,7 @@ export function ReserveClient({
             <div className="grid grid-cols-3 gap-2 rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-3 shadow-[var(--shadow-sm)]">
               <Benefit icon={<CalendarDays size={23} />} label="Reserva en pocos pasos" />
               <Benefit icon={<PhoneOff size={23} />} label="Sin llamadas" />
-              <Benefit icon={<CreditCard size={23} />} label="Pago en el club" />
+              <Benefit icon={<CreditCard size={23} />} label="Pago online" />
             </div>
           </section>
 
@@ -282,7 +282,7 @@ export function ReserveClient({
                 <div className="space-y-3">
                   <InfoLine
                     icon={<CreditCard size={16} />}
-                    text="Las reservas se pueden pagar en el club."
+                    text="Las reservas se pagan online con Mercado Pago."
                   />
                   <InfoLine
                     icon={<CheckCircle2 size={16} />}

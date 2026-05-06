@@ -14,10 +14,7 @@ import {
   SLOT_MINUTES,
 } from "../lib/bookingRules";
 import { buildCustomerUpsert, normalizeCustomerPhone } from "../lib/customerRecords";
-import {
-  calculateSuggestedDeposit,
-  estimateMembershipForDeposit,
-} from "../lib/depositRules";
+import { getPublicOnlineBookingRequiredError } from "../lib/reservationPaymentOptionRules";
 import {
   BOOKING_CODE_RANDOM_BYTES,
   buildPublicAvailabilitySlot,
@@ -92,6 +89,8 @@ const publicBookingReceiptValidator = v.object({
   endMinutes: v.number(),
   durationMinutes: v.number(),
   value: v.number(),
+  bookingStatus: v.optional(v.string()),
+  paymentStatus: v.optional(v.string()),
   courtName: v.string(),
   clubName: v.string(),
   clubWhatsapp: v.string(),
@@ -357,96 +356,6 @@ export async function upsertCustomer(
   });
 }
 
-async function getActiveMembershipForBookingCustomer(
-  ctx: Ctx,
-  clubId: Id<"clubs">,
-  customerId: Id<"customers">,
-  localDate: string,
-  startMinutes: number,
-) {
-  const memberships = await ctx.db
-    .query("customerMemberships")
-    .withIndex("by_customer_club", (q) =>
-      q.eq("customerId", customerId).eq("clubId", clubId),
-    )
-    .collect();
-  const bookingStart = bookingStartTimestamp(localDate, startMinutes);
-
-  return (
-    memberships.find(
-      (membership) =>
-        membership.status === "active" &&
-        membership.startsAt <= bookingStart &&
-        (membership.endsAt === undefined || membership.endsAt > bookingStart),
-    ) ?? null
-  );
-}
-
-async function buildOnlineBookingDepositSnapshot(args: {
-  ctx: Ctx;
-  club: Doc<"clubs">;
-  customerId: Id<"customers">;
-  localDate: string;
-  startMinutes: number;
-  baseReservationTotal: number;
-}) {
-  const membership = await getActiveMembershipForBookingCustomer(
-    args.ctx,
-    args.club._id,
-    args.customerId,
-    args.localDate,
-    args.startMinutes,
-  );
-  const plan = membership ? await args.ctx.db.get(membership.membershipPlanId) : null;
-  const membershipEstimate = estimateMembershipForDeposit({
-    baseReservationTotal: args.baseReservationTotal,
-    bookingDate: args.localDate,
-    bookingStartMinutes: args.startMinutes,
-    membership:
-      membership && plan && plan.isActive
-        ? {
-            membershipId: membership._id,
-            membershipPlanId: plan._id,
-            membershipPlanName: plan.name,
-            benefitType: plan.benefitType,
-            discountPercent: plan.discountPercent,
-            fixedPrice: plan.fixedPrice,
-            waivesDeposit: plan.waivesDeposit,
-            appliesAlways: plan.appliesAlways,
-            validDaysOfWeek: plan.validDaysOfWeek,
-            validStartTime: plan.validStartTime,
-            validEndTime: plan.validEndTime,
-          }
-        : null,
-  });
-  const deposit = calculateSuggestedDeposit({
-    baseReservationTotal: args.baseReservationTotal,
-    estimatedMembershipDiscount: membershipEstimate.estimatedMembershipDiscount,
-    playerHasDepositWaiver: membershipEstimate.playerHasDepositWaiver,
-    clubDepositSettings: args.club,
-  });
-
-  return {
-    estimatedMembershipDiscount: membershipEstimate.estimatedMembershipDiscount,
-    estimatedTotal: deposit.estimatedPayableTotal,
-    depositSuggestedAmount: deposit.depositAmount,
-    estimatedBalanceDue: deposit.estimatedPayableTotal,
-    membershipSnapshot: membershipEstimate.membershipSnapshot,
-  };
-}
-
-function bookingStartTimestamp(localDate: string, startMinutes: number) {
-  const hours = Math.floor(startMinutes / 60);
-  const minutes = startMinutes % 60;
-
-  return new Date(
-    `${localDate}T${String(hours).padStart(2, "0")}:${String(minutes).padStart(
-      2,
-      "0",
-    )}:00-05:00`,
-  ).getTime();
-}
-
 export const getAvailability = query({
   args: {
     clubSlug: v.string(),
@@ -538,76 +447,8 @@ export const createOnlineBooking = mutation({
     paymentMethod: v.union(v.literal("club"), v.literal("transfer")),
   },
   returns: v.object({ code: v.string(), bookingId: v.id("bookings") }),
-  handler: async (ctx, args) => {
-    const auth = await requireAuthUser(ctx);
-    const club = await getClubOrThrow(ctx, args.clubSlug, {
-      requirePublished: true,
-      requireBookingEnabled: true,
-    });
-    const court = await getCourtOrThrow(ctx, args.courtId);
-    await assertCanBook({ ctx, club, court, ...args });
-
-    const now = Date.now();
-    const value = calculateBookingValue(
-      args.localDate,
-      args.startMinutes,
-      args.durationMinutes,
-      club.pricing,
-    );
-    const code = await buildBookingCode(ctx);
-    const customerEmail = args.customerEmail?.trim() || auth.user.email;
-    const customerId = await upsertCustomer(ctx, {
-      clubId: club._id,
-      fullName: args.customerName,
-      phone: args.customerPhone,
-      email: customerEmail,
-      userId: auth.userId,
-      source: "online",
-    });
-    const depositSnapshot = await buildOnlineBookingDepositSnapshot({
-      ctx,
-      club,
-      customerId,
-      localDate: args.localDate,
-      startMinutes: args.startMinutes,
-      baseReservationTotal: value,
-    });
-
-    const bookingId = await ctx.db.insert("bookings", {
-      clubId: club._id,
-      courtId: court._id,
-      customerId,
-      playerUserId: auth.userId,
-      createdByUserId: auth.userId,
-      createdByRole: "player",
-      code,
-      localDate: args.localDate,
-      startMinutes: args.startMinutes,
-      durationMinutes: args.durationMinutes,
-      endMinutes: args.startMinutes + args.durationMinutes,
-      timezone: BOGOTA_TIMEZONE,
-      customerName: args.customerName.trim(),
-      customerPhone: args.customerPhone.trim(),
-      customerEmail: customerEmail?.trim() || undefined,
-      source: "online",
-      paymentMethod: args.paymentMethod,
-      paymentStatus: "pending",
-      bookingStatus: "confirmed",
-      value,
-      basePrice: value,
-      estimatedMembershipDiscount: depositSnapshot.estimatedMembershipDiscount,
-      estimatedTotal: depositSnapshot.estimatedTotal,
-      depositSuggestedAmount: depositSnapshot.depositSuggestedAmount,
-      depositPaidAmount: 0,
-      depositStatus: "none",
-      paymentOptionSelected: "pay_at_club",
-      estimatedBalanceDue: depositSnapshot.estimatedTotal,
-      membershipSnapshot: depositSnapshot.membershipSnapshot,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return { code, bookingId };
+  handler: async () => {
+    throw new ConvexError(getPublicOnlineBookingRequiredError());
   },
 });
 

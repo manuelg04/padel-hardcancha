@@ -2,9 +2,8 @@
 
 import { AlertCircle, ArrowLeft, Check, CreditCard } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useQuery } from "convex/react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -12,17 +11,14 @@ import { formatDateLong, minutesToRange } from "@/lib/dates";
 import { formatCOP, onlyDigits } from "@/lib/format";
 import { getPlayerBookingError } from "@/lib/playerBookingErrors";
 import {
-  calculateReservationPaymentBreakdown,
+  PUBLIC_ONLINE_PAYMENT_UNAVAILABLE_MESSAGE,
+  getPublicReservationPaymentOptions,
   getReservationPaymentSubmitLabel,
   type PublicReservationPaymentType,
 } from "@/lib/reservationPaymentOptionRules";
 import { PlayerShell } from "./PlayerShell";
 
-type PaymentSelection =
-  | "pay_at_club"
-  | "transfer"
-  | "deposit"
-  | "full_payment";
+type PaymentSelection = PublicReservationPaymentType;
 
 export function ConfirmClient({
   slug,
@@ -37,13 +33,12 @@ export function ConfirmClient({
   startMinutes: number;
   durationMinutes: number;
 }) {
-  const router = useRouter();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const [name, setName] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [paymentSelection, setPaymentSelection] =
-    useState<PaymentSelection>("pay_at_club");
+    useState<PaymentSelection>("deposit");
   const [error, setError] = useState("");
   const [canReturnToAvailability, setCanReturnToAvailability] = useState(false);
   const [submittingOption, setSubmittingOption] =
@@ -63,7 +58,6 @@ export function ConfirmClient({
         }
       : "skip",
   );
-  const createBooking = useMutation(api.bookings.createOnlineBooking);
   const createDepositBooking = useAction(api.payments.createOnlineDepositBooking);
   const createFullPaymentBooking = useAction(
     api.payments.createOnlineFullPaymentBooking,
@@ -106,6 +100,7 @@ export function ConfirmClient({
   const hasDepositWaiver = Boolean(
     depositPreview?.onlineDepositsEnabled && depositPreview.playerHasDepositWaiver,
   );
+  const paymentPreviewLoading = depositPreview === undefined;
   const estimatedPaymentTotal =
     depositPreview?.estimatedTotal ?? selectedSlot?.value ?? 0;
   const onlinePaymentsAvailable = Boolean(
@@ -120,37 +115,25 @@ export function ConfirmClient({
     onlinePaymentsAvailable && (depositPreview?.fullPaymentAmount ?? 0) > 0,
   );
   const paymentOptions = useMemo(
-    () => buildPaymentOptions({
-      total: estimatedPaymentTotal,
-      showDepositChoice,
-      showFullPaymentChoice,
-    }),
+    () =>
+      buildPaymentOptions({
+        total: estimatedPaymentTotal,
+        showDepositChoice,
+        showFullPaymentChoice,
+      }),
     [estimatedPaymentTotal, showDepositChoice, showFullPaymentChoice],
   );
-  const effectivePaymentSelection = paymentOptions.some(
-    (option) => option.value === paymentSelection,
-  )
-    ? paymentSelection
-    : "pay_at_club";
-  const selectedPublicPaymentType: PublicReservationPaymentType =
-    effectivePaymentSelection === "deposit" ||
-    effectivePaymentSelection === "full_payment"
-      ? effectivePaymentSelection
-      : "pay_at_club";
-  const primaryButtonLabel =
-    effectivePaymentSelection === "transfer"
-      ? submittingOption === "transfer"
-        ? "Confirmando..."
-        : "Confirmar reserva"
-      : getReservationPaymentSubmitLabel(
-          selectedPublicPaymentType,
-          submittingOption === effectivePaymentSelection,
-        );
-  const primaryButtonIcon =
-    effectivePaymentSelection === "deposit" ||
-    effectivePaymentSelection === "full_payment"
-      ? (<CreditCard size={17} />)
-      : (<Check size={17} />);
+  const selectedPaymentOption =
+    paymentOptions.find((option) => option.value === paymentSelection) ??
+    paymentOptions[0] ??
+    null;
+  const effectivePaymentSelection = selectedPaymentOption?.value ?? null;
+  const primaryButtonLabel = effectivePaymentSelection
+    ? getReservationPaymentSubmitLabel(
+        effectivePaymentSelection,
+        submittingOption === effectivePaymentSelection,
+      )
+    : "";
 
   async function submitBooking(option: PaymentSelection) {
     setError("");
@@ -170,51 +153,38 @@ export function ConfirmClient({
       return;
     }
 
+    if (!onlinePaymentsAvailable) {
+      setError(PUBLIC_ONLINE_PAYMENT_UNAVAILABLE_MESSAGE);
+      return;
+    }
+
     try {
       setSubmittingOption(option);
-      if (option === "deposit" || option === "full_payment") {
-        const paymentAction =
-          option === "deposit" ? createDepositBooking : createFullPaymentBooking;
-        const result = await paymentAction({
-          clubSlug: slug,
-          courtId: courtId as Id<"courts">,
-          localDate,
-          startMinutes,
-          durationMinutes,
-          customerName: effectiveName,
-          customerPhone: effectivePhone,
-          customerEmail: effectiveEmail || undefined,
-        });
+      const paymentAction =
+        option === "deposit" ? createDepositBooking : createFullPaymentBooking;
+      const result = await paymentAction({
+        clubSlug: slug,
+        courtId: courtId as Id<"courts">,
+        localDate,
+        startMinutes,
+        durationMinutes,
+        customerName: effectiveName,
+        customerPhone: effectivePhone,
+        customerEmail: effectiveEmail || undefined,
+      });
 
-        if (result.checkoutUrl) {
-          window.location.href = result.checkoutUrl;
-          return;
-        }
-
-        setError(
-          "No pudimos iniciar el pago online. Intenta nuevamente o elige pago en club.",
-        );
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
         return;
-      } else {
-        const result = await createBooking({
-          clubSlug: slug,
-          courtId: courtId as Id<"courts">,
-          localDate,
-          startMinutes,
-          durationMinutes,
-          customerName: effectiveName,
-          customerPhone: effectivePhone,
-          customerEmail: effectiveEmail || undefined,
-          paymentMethod: option === "transfer" ? "transfer" : "club",
-        });
-        router.push(`/club/${slug}/reserva/${result.code}`);
       }
+
+      setError("No pudimos iniciar el pago online. Intenta nuevamente.");
     } catch (bookingError) {
       const bookingFailure = getPlayerBookingError(bookingError);
       setError(
-        option === "deposit" || option === "full_payment"
-          ? "No pudimos iniciar el pago online. Intenta nuevamente o elige pago en club."
-          : bookingFailure.message,
+        bookingFailure.code === "SLOT_TAKEN"
+          ? bookingFailure.message
+          : "No pudimos iniciar el pago online. Intenta nuevamente.",
       );
       setCanReturnToAvailability(bookingFailure.canReturnToAvailability);
     } finally {
@@ -224,6 +194,11 @@ export function ConfirmClient({
 
   function submitSelectedPayment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!effectivePaymentSelection) {
+      setError(PUBLIC_ONLINE_PAYMENT_UNAVAILABLE_MESSAGE);
+      return;
+    }
+
     void submitBooking(effectivePaymentSelection);
   }
 
@@ -353,41 +328,51 @@ export function ConfirmClient({
                 <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-[var(--ink-500)]">
                   Método de pago
                 </p>
-                <div className="grid gap-2">
-                  {paymentOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={effectivePaymentSelection === option.value}
-                      className={`rounded-[var(--r-md)] border px-3 py-3 text-left ${
-                        effectivePaymentSelection === option.value
-                          ? "border-[var(--court-500)] bg-[var(--court-50)] text-[var(--court-700)]"
-                          : "border-[var(--ink-200)] bg-white"
-                      }`}
-                      onClick={() => setPaymentSelection(option.value)}
-                    >
-                      <span className="flex items-start justify-between gap-3">
-                        <span>
-                          <span className="block text-sm font-black">
-                            {option.label}
+                {paymentPreviewLoading ? (
+                  <div className="rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold text-[var(--ink-600)]">
+                    Consultando pagos online...
+                  </div>
+                ) : paymentOptions.length > 0 ? (
+                  <div className="grid gap-2">
+                    {paymentOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={effectivePaymentSelection === option.value}
+                        className={`rounded-[var(--r-md)] border px-3 py-3 text-left ${
+                          effectivePaymentSelection === option.value
+                            ? "border-[var(--court-500)] bg-[var(--court-50)] text-[var(--court-700)]"
+                            : "border-[var(--ink-200)] bg-white"
+                        }`}
+                        onClick={() => setPaymentSelection(option.value)}
+                      >
+                        <span className="flex items-start justify-between gap-3">
+                          <span>
+                            <span className="block text-sm font-black">
+                              {option.label}
+                            </span>
+                            <span className="mt-1 block text-xs font-bold text-[var(--ink-500)]">
+                              {option.description}
+                            </span>
                           </span>
-                          <span className="mt-1 block text-xs font-bold text-[var(--ink-500)]">
-                            {option.description}
-                          </span>
+                          {effectivePaymentSelection === option.value ? (
+                            <Check size={18} className="mt-0.5 shrink-0" />
+                          ) : null}
                         </span>
-                        {effectivePaymentSelection === option.value ? (
-                          <Check size={18} className="mt-0.5 shrink-0" />
-                        ) : null}
-                      </span>
-                      <span className="mt-3 grid gap-1 text-sm font-black text-[var(--ink-800)]">
-                        {option.lines.map((line) => (
-                          <span key={line}>{line}</span>
-                        ))}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                {showDepositChoice || showFullPaymentChoice ? (
+                        <span className="mt-3 grid gap-1 text-sm font-black text-[var(--ink-800)]">
+                          {option.lines.map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-[var(--r-md)] border border-[var(--status-pending-border)] bg-[var(--status-pending-bg)] p-3 text-sm font-bold text-[var(--status-pending-fg)]">
+                    {PUBLIC_ONLINE_PAYMENT_UNAVAILABLE_MESSAGE}
+                  </div>
+                )}
+                {paymentOptions.length > 0 ? (
                   <p className="mt-3 text-xs font-bold text-[var(--ink-500)]">
                     El pago online se procesa con Mercado Pago. El club recibe el
                     dinero directamente en su cuenta.
@@ -397,8 +382,8 @@ export function ConfirmClient({
 
               {hasDepositWaiver ? (
                 <div className="rounded-[var(--r-lg)] border border-[var(--court-200)] bg-[var(--court-50)] p-4 text-sm font-bold text-[var(--court-700)]">
-                  <p>Tu membresia te permite reservar sin anticipo.</p>
-                  <p>El saldo final se liquida en recepcion.</p>
+                  <p>Tu membresia no requiere anticipo.</p>
+                  <p>Para reservar desde la web, usa pago completo online.</p>
                 </div>
               ) : null}
 
@@ -416,18 +401,20 @@ export function ConfirmClient({
                 </div>
               ) : null}
 
-              <button
-                type="submit"
-                className="btn btn-primary btn-block"
-                disabled={
-                  !formValid ||
-                  selectedSlotUnavailable ||
-                  submittingOption !== null
-                }
-              >
-                {primaryButtonIcon}
-                {primaryButtonLabel}
-              </button>
+              {effectivePaymentSelection ? (
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-block"
+                  disabled={
+                    !formValid ||
+                    selectedSlotUnavailable ||
+                    submittingOption !== null
+                  }
+                >
+                  <CreditCard size={17} />
+                  {primaryButtonLabel}
+                </button>
+              ) : null}
             </form>
           </div>
         </div>
@@ -450,57 +437,17 @@ function buildPaymentOptions({
   description: string;
   lines: string[];
 }> {
-  if (total <= 0) return [];
-
-  const payAtClub = calculateReservationPaymentBreakdown(total, "pay_at_club");
-  const transfer = {
-    value: "transfer" as const,
-    label: "Transferencia",
-    description: "Reserva ahora y coordina la transferencia con el club.",
-    lines: [`${formatCOP(total)} por transferencia`],
-  };
-  const options: Array<{
-    value: PaymentSelection;
-    label: string;
-    description: string;
-    lines: string[];
-  }> = [
-    {
-      value: "pay_at_club",
-      label: payAtClub.label,
-      description: payAtClub.description,
-      lines: [`${formatCOP(payAtClub.pendingAtReception)} en club`],
-    },
-    transfer,
-  ];
-
-  if (showDepositChoice) {
-    const deposit = calculateReservationPaymentBreakdown(total, "deposit");
-    options.push({
-      value: "deposit",
-      label: deposit.label,
-      description: deposit.description,
-      lines: [
-        `Pagas ahora: ${formatCOP(deposit.onlineAmount)}`,
-        `Saldo en club: ${formatCOP(deposit.pendingAtReception)}`,
-      ],
-    });
-  }
-
-  if (showFullPaymentChoice) {
-    const fullPayment = calculateReservationPaymentBreakdown(total, "full_payment");
-    options.push({
-      value: "full_payment",
-      label: fullPayment.label,
-      description: fullPayment.description,
-      lines: [
-        `Pagas ahora: ${formatCOP(fullPayment.onlineAmount)}`,
-        `Saldo en club: ${formatCOP(fullPayment.pendingAtReception)}`,
-      ],
-    });
-  }
-
-  return options;
+  return getPublicReservationPaymentOptions({
+    total,
+    depositAvailable: showDepositChoice,
+    fullPaymentAvailable: showFullPaymentChoice,
+  }).map((option) => ({
+    ...option,
+    lines: [
+      `Pagas ahora: ${formatCOP(option.onlineAmount)}`,
+      `Saldo en club: ${formatCOP(option.pendingAtReception)}`,
+    ],
+  }));
 }
 
 function AvailabilityRecovery({ href }: { href: string }) {
