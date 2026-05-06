@@ -77,6 +77,11 @@ export const mercadoPagoConnectionStatusValidator = v.union(
   v.literal("error"),
 );
 
+export const mercadoPagoConnectionSourceValidator = v.union(
+  v.literal("manual"),
+  v.literal("oauth"),
+);
+
 export const mercadoPagoOAuthStateStatusValidator = v.union(
   v.literal("pending"),
   v.literal("used"),

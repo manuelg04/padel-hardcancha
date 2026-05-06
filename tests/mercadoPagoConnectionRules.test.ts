@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { normalizeMercadoPagoConnectionInput } from "../lib/mercadoPagoConnectionRules";
+import {
+  buildMercadoPagoDisconnectPatch,
+  buildManualMercadoPagoConnectionPatch,
+  normalizeMercadoPagoConnectionInput,
+} from "../lib/mercadoPagoConnectionRules";
 
 describe("Mercado Pago connection input", () => {
   test("requires an access token before calling the backend", () => {
@@ -37,6 +41,63 @@ describe("Mercado Pago connection input", () => {
       ok: true,
       accessToken: "APP_USR-token",
       collectorId: "12345",
+    });
+  });
+
+  test("keeps manual token compatibility and marks the source as manual", () => {
+    expect(
+      buildManualMercadoPagoConnectionPatch({
+        accessToken: "APP_USR-token",
+        collectorId: "12345",
+        userId: "user-1",
+        now: 1_700_000_000_000,
+        existingConnectedAt: undefined,
+      }),
+    ).toEqual({
+      status: "connected",
+      collectorId: "12345",
+      accessToken: "APP_USR-token",
+      connectionSource: "manual",
+      connectedByUserId: "user-1",
+      connectedAt: 1_700_000_000_000,
+      accessTokenEncrypted: undefined,
+      refreshTokenEncrypted: undefined,
+      accessTokenExpiresAt: undefined,
+      refreshTokenExpiresAt: undefined,
+      publicKey: undefined,
+      liveMode: undefined,
+      scope: undefined,
+      mpUserId: undefined,
+      tokenType: undefined,
+      refreshError: undefined,
+      refreshErrorAt: undefined,
+      lastRefreshAt: undefined,
+      lastValidatedAt: undefined,
+      disconnectedAt: undefined,
+      updatedAt: 1_700_000_000_000,
+    });
+  });
+
+  test("cleans manual and OAuth fields when disconnecting", () => {
+    expect(buildMercadoPagoDisconnectPatch(1_700_000_000_000)).toEqual({
+      status: "disconnected",
+      collectorId: undefined,
+      accessToken: undefined,
+      accessTokenEncrypted: undefined,
+      refreshTokenEncrypted: undefined,
+      publicKey: undefined,
+      accessTokenExpiresAt: undefined,
+      refreshTokenExpiresAt: undefined,
+      liveMode: undefined,
+      scope: undefined,
+      mpUserId: undefined,
+      tokenType: undefined,
+      lastRefreshAt: undefined,
+      refreshError: undefined,
+      refreshErrorAt: undefined,
+      lastValidatedAt: undefined,
+      disconnectedAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
     });
   });
 });

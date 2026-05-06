@@ -9,7 +9,11 @@ import {
   normalizeDepositSettings,
 } from "../lib/depositRules";
 import { extractMercadoPagoFinancialSnapshot } from "../lib/mercadoPagoFinancialRules";
-import { normalizeMercadoPagoConnectionInput } from "../lib/mercadoPagoConnectionRules";
+import {
+  buildManualMercadoPagoConnectionPatch,
+  buildMercadoPagoDisconnectPatch,
+  normalizeMercadoPagoConnectionInput,
+} from "../lib/mercadoPagoConnectionRules";
 import {
   calculatePaymentTransactionsKpis,
   calculatePendingAmountAtReception,
@@ -496,7 +500,7 @@ export const connectMercadoPagoAccessToken = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { club } = await getCurrentUserClub(ctx);
+    const { club, userId } = await getCurrentUserClub(ctx);
     await requireClubAccess(ctx, club._id, ["club_master"]);
     const connectionInput = normalizeMercadoPagoConnectionInput(args);
 
@@ -512,15 +516,13 @@ export const connectMercadoPagoAccessToken = mutation({
       .query("mercadoPagoConnections")
       .withIndex("by_club", (q) => q.eq("clubId", club._id))
       .unique();
-    const payload = {
-      status: "connected" as const,
-      ...(connectionInput.collectorId
-        ? { collectorId: connectionInput.collectorId }
-        : {}),
+    const payload = buildManualMercadoPagoConnectionPatch({
       accessToken: connectionInput.accessToken,
-      connectedAt: existing?.connectedAt ?? now,
-      updatedAt: now,
-    };
+      collectorId: connectionInput.collectorId,
+      userId,
+      now,
+      existingConnectedAt: existing?.connectedAt,
+    });
 
     if (existing) {
       await ctx.db.patch(existing._id, payload);
@@ -554,15 +556,7 @@ export const disconnectMercadoPago = mutation({
     const now = Date.now();
 
     if (connection) {
-      await ctx.db.patch(connection._id, {
-        status: "disconnected",
-        collectorId: undefined,
-        accessToken: undefined,
-        accessTokenEncrypted: undefined,
-        publicKey: undefined,
-        disconnectedAt: now,
-        updatedAt: now,
-      });
+      await ctx.db.patch(connection._id, buildMercadoPagoDisconnectPatch(now));
     }
 
     await ctx.db.patch(club._id, {
