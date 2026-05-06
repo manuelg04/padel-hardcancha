@@ -12,6 +12,7 @@ import type * as academy from "../academy.js";
 import type * as access from "../access.js";
 import type * as auth from "../auth.js";
 import type * as bookings from "../bookings.js";
+import type * as clubSetup from "../clubSetup.js";
 import type * as clubs from "../clubs.js";
 import type * as courts from "../courts.js";
 import type * as http from "../http.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   access: typeof access;
   auth: typeof auth;
   bookings: typeof bookings;
+  clubSetup: typeof clubSetup;
   clubs: typeof clubs;
   courts: typeof courts;
   http: typeof http;

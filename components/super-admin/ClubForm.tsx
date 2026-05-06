@@ -7,6 +7,8 @@ import { useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
+import { validateNewClubAdminAccount } from "@/lib/clubAdminRules";
+import { userFacingConvexErrorMessage } from "@/lib/convexErrorMessage";
 import { inputToMinutes, minutesToInput } from "@/lib/dates";
 import { normalizeGalleryUrls, slugify } from "@/lib/slug";
 
@@ -35,6 +37,7 @@ export type ClubFormValues = {
   masterName: string;
   masterEmail: string;
   masterPhone: string;
+  masterPassword: string;
 };
 
 export type ClubMasterValues = {
@@ -71,6 +74,7 @@ const defaults: ClubFormValues = {
   masterName: "",
   masterEmail: "",
   masterPhone: "",
+  masterPassword: "",
 };
 
 function clubToValues(
@@ -83,6 +87,7 @@ function clubToValues(
       masterName: master?.name ?? "",
       masterEmail: master?.email ?? "",
       masterPhone: master?.phone ?? "",
+      masterPassword: "",
     };
   }
 
@@ -111,6 +116,7 @@ function clubToValues(
     masterName: master?.name ?? "",
     masterEmail: master?.email ?? "",
     masterPhone: master?.phone ?? "",
+    masterPassword: "",
   };
 }
 
@@ -125,7 +131,7 @@ function isValidOptionalUrl(value: string) {
   }
 }
 
-function validate(values: ClubFormValues) {
+function validate(values: ClubFormValues, mode: "create" | "edit") {
   if (!values.name.trim()) return "Completa el nombre del club.";
   if (!values.slug.trim()) return "Completa el slug del club.";
   if (!values.city.trim()) return "Completa la ciudad.";
@@ -150,7 +156,19 @@ function validate(values: ClubFormValues) {
   if (values.galleryImageUrls.some((url) => !isValidOptionalUrl(url))) {
     return "Cada imagen de galeria debe ser una URL valida.";
   }
+  if (mode === "create") {
+    const adminValidation = validateNewClubAdminAccount({
+      name: values.masterName,
+      email: values.masterEmail,
+      phone: values.masterPhone,
+      password: values.masterPassword,
+    });
+
+    if (!adminValidation.ok) return adminValidation.message;
+  }
+
   if (
+    mode === "edit" &&
     values.masterEmail.trim() &&
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.masterEmail.trim())
   ) {
@@ -182,7 +200,7 @@ export function ClubForm({
   const [lookupEmail, setLookupEmail] = useState("");
   const foundMaster = useQuery(
     api.users.superAdminFindUserByEmail,
-    lookupEmail ? { email: lookupEmail } : "skip",
+    mode === "edit" && lookupEmail ? { email: lookupEmail } : "skip",
   );
 
   const masterName = foundMaster?.name ?? values.masterName;
@@ -203,7 +221,7 @@ export function ClubForm({
       isPublished:
         intent === "publish" ? true : intent === "draft" ? false : values.isPublished,
     };
-    const validationError = validate(nextValues);
+    const validationError = validate(nextValues, mode);
 
     if (validationError) {
       setError(validationError);
@@ -216,9 +234,10 @@ export function ClubForm({
       await onSubmit(nextValues, intent);
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "No se pudo guardar el club.",
+        userFacingConvexErrorMessage(
+          submitError,
+          "No se pudo guardar el club.",
+        ),
       );
     } finally {
       setSaving(null);
@@ -416,40 +435,90 @@ export function ClubForm({
         </div>
       </Section>
 
-      <Section title="Usuario maestro del club">
-        <div className="grid gap-4 md:grid-cols-[1fr_auto]">
-          <div className="field">
-            <label>Email</label>
-            <input
-              value={values.masterEmail}
-              onChange={(event) => {
-                setField("masterEmail", event.target.value);
-                setField("masterName", "");
-                setField("masterPhone", "");
-              }}
-            />
+      <Section title="Administrador del club">
+        {mode === "create" ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="field">
+              <label>Nombre</label>
+              <input
+                autoComplete="off"
+                name="new-club-admin-name"
+                value={values.masterName}
+                onChange={(event) => setField("masterName", event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Celular</label>
+              <input
+                autoComplete="off"
+                inputMode="tel"
+                name="new-club-admin-phone"
+                value={values.masterPhone}
+                onChange={(event) => setField("masterPhone", event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Email</label>
+              <input
+                autoComplete="off"
+                inputMode="email"
+                name="new-club-admin-email"
+                value={values.masterEmail}
+                onChange={(event) => setField("masterEmail", event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Contrasena</label>
+              <input
+                autoComplete="new-password"
+                name="new-club-admin-password"
+                type="password"
+                value={values.masterPassword}
+                onChange={(event) =>
+                  setField("masterPassword", event.target.value)
+                }
+              />
+            </div>
           </div>
-          <button
-            className="btn btn-dark mt-5"
-            type="button"
-            onClick={() => setLookupEmail(values.masterEmail.trim().toLowerCase())}
-          >
-            Buscar usuario
-          </button>
-          <div className="field">
-            <label>Nombre</label>
-            <input value={masterName} readOnly />
-          </div>
-          <div className="field">
-            <label>Celular</label>
-            <input value={masterPhone} readOnly />
-          </div>
-        </div>
-        {lookupEmail && foundMaster === null ? (
-          <p className="mt-3 rounded-[var(--r-md)] bg-[var(--status-pending-bg)] p-3 text-sm font-bold text-[var(--status-pending-fg)]">
-            No encontramos un usuario con ese email.
-          </p>
-        ) : null}
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+              <div className="field">
+                <label>Email</label>
+                <input
+                  value={values.masterEmail}
+                  onChange={(event) => {
+                    setField("masterEmail", event.target.value);
+                    setField("masterName", "");
+                    setField("masterPhone", "");
+                  }}
+                />
+              </div>
+              <button
+                className="btn btn-dark mt-5"
+                type="button"
+                onClick={() =>
+                  setLookupEmail(values.masterEmail.trim().toLowerCase())
+                }
+              >
+                Buscar cuenta
+              </button>
+              <div className="field">
+                <label>Nombre</label>
+                <input value={masterName} readOnly />
+              </div>
+              <div className="field">
+                <label>Celular</label>
+                <input value={masterPhone} readOnly />
+              </div>
+            </div>
+            {lookupEmail && foundMaster === null ? (
+              <p className="mt-3 rounded-[var(--r-md)] bg-[var(--status-pending-bg)] p-3 text-sm font-bold text-[var(--status-pending-fg)]">
+                No encontramos una cuenta con ese email.
+              </p>
+            ) : null}
+          </>
+        )}
       </Section>
 
       {error ? (

@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 
 import { BOGOTA_TIMEZONE } from "../lib/bookingRules";
-import { query, mutation } from "./_generated/server";
+import { internalMutation, query, mutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
@@ -331,75 +331,117 @@ export const superAdminGetClubMaster = query({
   },
 });
 
+type CreateClubArgs = {
+  name: string;
+  slug: string;
+  city: string;
+  state?: string;
+  country?: string;
+  address: string;
+  phone?: string;
+  whatsapp: string;
+  description?: string;
+  coverImageUrl?: string;
+  galleryImageUrls?: string[];
+  openingHoursText?: string;
+  normalPricePerHour: number;
+  peakPricePerHour: number;
+  weekendPricePerHour: number;
+  peakStartMinutes?: number;
+  peakEndMinutes?: number;
+  isActive?: boolean;
+  isPublished?: boolean;
+  isFeatured?: boolean;
+  bookingEnabled?: boolean;
+  openingHours?: Doc<"clubs">["openingHours"];
+  pricing?: Doc<"clubs">["pricing"];
+};
+
+const superAdminCreateClubArgs = {
+  name: v.string(),
+  slug: v.string(),
+  city: v.string(),
+  state: v.optional(v.string()),
+  country: v.optional(v.string()),
+  address: v.string(),
+  phone: v.optional(v.string()),
+  whatsapp: v.string(),
+  description: v.optional(v.string()),
+  coverImageUrl: v.optional(v.string()),
+  galleryImageUrls: v.optional(v.array(v.string())),
+  openingHoursText: v.optional(v.string()),
+  normalPricePerHour: v.number(),
+  peakPricePerHour: v.number(),
+  weekendPricePerHour: v.number(),
+  peakStartMinutes: v.optional(v.number()),
+  peakEndMinutes: v.optional(v.number()),
+  isActive: v.optional(v.boolean()),
+  isPublished: v.optional(v.boolean()),
+  isFeatured: v.optional(v.boolean()),
+  bookingEnabled: v.optional(v.boolean()),
+  openingHours: v.optional(v.array(openingHourValidator)),
+  pricing: v.optional(pricingValidator),
+};
+
+async function createClubRecord(ctx: MutationCtx, args: CreateClubArgs) {
+  assertCreateInput(args);
+
+  const slug = normalizeSlug(args.slug);
+  await assertSlugAvailable(ctx, slug);
+
+  const now = Date.now();
+  const peakStartMinutes = args.peakStartMinutes ?? DEFAULT_PEAK_START_MINUTES;
+  const peakEndMinutes = args.peakEndMinutes ?? DEFAULT_PEAK_END_MINUTES;
+  const pricing =
+    args.pricing ?? pricingFromFlat({ ...args, peakStartMinutes, peakEndMinutes });
+
+  return await ctx.db.insert("clubs", {
+    name: args.name.trim(),
+    slug,
+    city: args.city.trim(),
+    state: trimOrEmpty(args.state) || "Santander",
+    country: trimOrEmpty(args.country) || "Colombia",
+    address: args.address.trim(),
+    phone: trimOrEmpty(args.phone),
+    whatsapp: args.whatsapp.trim(),
+    description: trimOrEmpty(args.description),
+    coverImageUrl: trimOrEmpty(args.coverImageUrl) || defaultCoverImageUrl,
+    galleryImageUrls: args.galleryImageUrls ?? [],
+    openingHoursText:
+      trimOrEmpty(args.openingHoursText) ||
+      "Lunes a domingo: 6:00 am - 11:00 pm",
+    timezone: BOGOTA_TIMEZONE,
+    normalPricePerHour: args.normalPricePerHour,
+    peakPricePerHour: args.peakPricePerHour,
+    weekendPricePerHour: args.weekendPricePerHour,
+    peakStartMinutes,
+    peakEndMinutes,
+    openingHours: args.openingHours ?? defaultOpeningHours,
+    pricing,
+    isActive: args.isActive ?? true,
+    isPublished: args.isPublished ?? false,
+    isFeatured: args.isFeatured ?? false,
+    bookingEnabled: args.bookingEnabled ?? true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export const superAdminCreateClub = mutation({
-  args: {
-    name: v.string(),
-    slug: v.string(),
-    city: v.string(),
-    state: v.optional(v.string()),
-    country: v.optional(v.string()),
-    address: v.string(),
-    phone: v.optional(v.string()),
-    whatsapp: v.string(),
-    description: v.optional(v.string()),
-    coverImageUrl: v.optional(v.string()),
-    galleryImageUrls: v.optional(v.array(v.string())),
-    openingHoursText: v.optional(v.string()),
-    normalPricePerHour: v.number(),
-    peakPricePerHour: v.number(),
-    weekendPricePerHour: v.number(),
-    peakStartMinutes: v.optional(v.number()),
-    peakEndMinutes: v.optional(v.number()),
-    isActive: v.optional(v.boolean()),
-    isPublished: v.optional(v.boolean()),
-    isFeatured: v.optional(v.boolean()),
-    bookingEnabled: v.optional(v.boolean()),
-    openingHours: v.optional(v.array(openingHourValidator)),
-    pricing: v.optional(pricingValidator),
-  },
+  args: superAdminCreateClubArgs,
   returns: v.id("clubs"),
   handler: async (ctx, args) => {
     await requireSuperAdmin(ctx);
-    assertCreateInput(args);
+    return await createClubRecord(ctx, args);
+  },
+});
 
-    const slug = normalizeSlug(args.slug);
-    await assertSlugAvailable(ctx, slug);
-
-    const now = Date.now();
-    const peakStartMinutes = args.peakStartMinutes ?? DEFAULT_PEAK_START_MINUTES;
-    const peakEndMinutes = args.peakEndMinutes ?? DEFAULT_PEAK_END_MINUTES;
-    const pricing = args.pricing ?? pricingFromFlat({ ...args, peakStartMinutes, peakEndMinutes });
-
-    return await ctx.db.insert("clubs", {
-      name: args.name.trim(),
-      slug,
-      city: args.city.trim(),
-      state: trimOrEmpty(args.state) || "Santander",
-      country: trimOrEmpty(args.country) || "Colombia",
-      address: args.address.trim(),
-      phone: trimOrEmpty(args.phone),
-      whatsapp: args.whatsapp.trim(),
-      description: trimOrEmpty(args.description),
-      coverImageUrl: trimOrEmpty(args.coverImageUrl) || defaultCoverImageUrl,
-      galleryImageUrls: args.galleryImageUrls ?? [],
-      openingHoursText:
-        trimOrEmpty(args.openingHoursText) ||
-        "Lunes a domingo: 6:00 am - 11:00 pm",
-      timezone: BOGOTA_TIMEZONE,
-      normalPricePerHour: args.normalPricePerHour,
-      peakPricePerHour: args.peakPricePerHour,
-      weekendPricePerHour: args.weekendPricePerHour,
-      peakStartMinutes,
-      peakEndMinutes,
-      openingHours: args.openingHours ?? defaultOpeningHours,
-      pricing,
-      isActive: args.isActive ?? true,
-      isPublished: args.isPublished ?? false,
-      isFeatured: args.isFeatured ?? false,
-      bookingEnabled: args.bookingEnabled ?? true,
-      createdAt: now,
-      updatedAt: now,
-    });
+export const superAdminCreateClubInternal = internalMutation({
+  args: superAdminCreateClubArgs,
+  returns: v.id("clubs"),
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    return await createClubRecord(ctx, args);
   },
 });
 
@@ -532,63 +574,84 @@ export const superAdminUpdateClub = mutation({
   },
 });
 
+type AssignClubMasterArgs = {
+  clubId: Id<"clubs">;
+  email: string;
+};
+
+const superAdminAssignClubMasterArgs = {
+  clubId: v.id("clubs"),
+  email: v.string(),
+};
+
+async function assignClubMasterRecord(
+  ctx: MutationCtx,
+  args: AssignClubMasterArgs,
+) {
+  const [club, user] = await Promise.all([
+    ctx.db.get(args.clubId),
+    ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", args.email.trim().toLowerCase()))
+      .unique(),
+  ]);
+
+  if (!club) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "No encontramos el club.",
+    });
+  }
+
+  if (!user) {
+    throw new ConvexError({
+      code: "USER_NOT_FOUND",
+      message: "No encontramos un usuario con ese email.",
+    });
+  }
+
+  const now = Date.now();
+  const existing = await ctx.db
+    .query("clubUsers")
+    .withIndex("by_user_club", (q) =>
+      q.eq("userId", user._id).eq("clubId", args.clubId),
+    )
+    .unique();
+
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      role: "club_master",
+      status: "active",
+      updatedAt: now,
+    });
+    return existing._id;
+  }
+
+  return await ctx.db.insert("clubUsers", {
+    clubId: args.clubId,
+    userId: user._id,
+    role: "club_master",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export const superAdminAssignClubMaster = mutation({
-  args: {
-    clubId: v.id("clubs"),
-    email: v.string(),
-  },
+  args: superAdminAssignClubMasterArgs,
   returns: v.id("clubUsers"),
   handler: async (ctx, args) => {
     await requireSuperAdmin(ctx);
-    const [club, user] = await Promise.all([
-      ctx.db.get(args.clubId),
-      ctx.db
-        .query("users")
-        .withIndex("email", (q) =>
-          q.eq("email", args.email.trim().toLowerCase()),
-        )
-        .unique(),
-    ]);
+    return await assignClubMasterRecord(ctx, args);
+  },
+});
 
-    if (!club) {
-      throw new ConvexError({
-        code: "NOT_FOUND",
-        message: "No encontramos el club.",
-      });
-    }
-
-    if (!user) {
-      throw new ConvexError({
-        code: "USER_NOT_FOUND",
-        message: "No encontramos un usuario con ese email.",
-      });
-    }
-
-    const now = Date.now();
-    const existing = await ctx.db
-      .query("clubUsers")
-      .withIndex("by_user_club", (q) =>
-        q.eq("userId", user._id).eq("clubId", args.clubId),
-      )
-      .unique();
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        role: "club_master",
-        status: "active",
-        updatedAt: now,
-      });
-      return existing._id;
-    }
-
-    return await ctx.db.insert("clubUsers", {
-      clubId: args.clubId,
-      userId: user._id,
-      role: "club_master",
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
+export const superAdminAssignClubMasterInternal = internalMutation({
+  args: superAdminAssignClubMasterArgs,
+  returns: v.id("clubUsers"),
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    return await assignClubMasterRecord(ctx, args);
   },
 });
 

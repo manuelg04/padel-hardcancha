@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/convex/_generated/api";
@@ -9,11 +9,12 @@ import { SuperAdminLayout } from "./SuperAdminLayout";
 
 export function SuperAdminNewClubClient() {
   const router = useRouter();
-  const createClub = useMutation(api.clubs.superAdminCreateClub);
-  const assignClubMaster = useMutation(api.clubs.superAdminAssignClubMaster);
+  const createClubWithAdmin = useAction(
+    api.clubSetup.superAdminCreateClubWithAdmin,
+  );
 
   async function save(values: ClubFormValues) {
-    const clubId = await createClub({
+    const clubId = await createClubWithAdmin({
       name: values.name,
       slug: values.slug,
       city: values.city,
@@ -34,14 +35,11 @@ export function SuperAdminNewClubClient() {
       isPublished: values.isPublished,
       isFeatured: values.isFeatured,
       bookingEnabled: values.bookingEnabled,
+      masterName: values.masterName,
+      masterEmail: values.masterEmail,
+      masterPhone: values.masterPhone,
+      masterPassword: values.masterPassword,
     });
-
-    if (values.masterEmail.trim()) {
-      await assignClubMaster({
-        clubId,
-        email: values.masterEmail,
-      });
-    }
 
     router.push(`/super-admin/clubes/${clubId}/editar`);
   }

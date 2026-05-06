@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 
-import { query } from "./_generated/server";
+import { internalQuery, query } from "./_generated/server";
 import {
   clubAccessValidator,
   userPublicValidator,
@@ -66,6 +66,20 @@ export const getCurrentUserAccess = query({
 });
 
 export const superAdminFindUserByEmail = query({
+  args: { email: v.string() },
+  returns: v.union(userPublicValidator, v.null()),
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", args.email.trim().toLowerCase()))
+      .unique();
+
+    return user ? publicUser(user) : null;
+  },
+});
+
+export const superAdminFindUserByEmailInternal = internalQuery({
   args: { email: v.string() },
   returns: v.union(userPublicValidator, v.null()),
   handler: async (ctx, args) => {
