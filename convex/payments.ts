@@ -129,7 +129,7 @@ const connectionStatusValidator = v.object({
 const nullableNumberValidator = v.union(v.number(), v.null());
 const nullableStringValidator = v.union(v.string(), v.null());
 
-const paymentTransactionRowValidator = v.object({
+const paymentTransactionRowFields = {
   id: v.id("reservationPayments"),
   clubId: v.id("clubs"),
   reservationId: v.id("bookings"),
@@ -161,6 +161,15 @@ const paymentTransactionRowValidator = v.object({
   financialSnapshotWarning: nullableStringValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
+};
+
+const paymentTransactionRowValidator = v.object(paymentTransactionRowFields);
+
+const paymentTransactionDetailValidator = v.object({
+  ...paymentTransactionRowFields,
+  customerEmail: nullableStringValidator,
+  bookingStatus: nullableStringValidator,
+  currency: nullableStringValidator,
 });
 
 const paymentTransactionKpisValidator = v.object({
@@ -1263,7 +1272,7 @@ export const getPaymentTransactionDetail = query({
   args: {
     paymentId: v.id("reservationPayments"),
   },
-  returns: v.union(paymentTransactionRowValidator, v.null()),
+  returns: v.union(paymentTransactionDetailValidator, v.null()),
   handler: async (ctx, args) => {
     const { club } = await getCurrentUserClub(ctx);
     const payment = await ctx.db.get(args.paymentId);
@@ -1291,7 +1300,7 @@ export const getPaymentTransactionDetail = query({
       contexts.find((candidate) => candidate.payment._id === payment._id) ??
       (await buildPaymentTransactionContext(ctx, payment));
 
-    return buildPaymentTransactionRow(context, approvedGrossByReservation);
+    return buildPaymentTransactionDetail(context, approvedGrossByReservation);
   },
 });
 
@@ -1429,6 +1438,19 @@ function buildPaymentTransactionRow(
     financialSnapshotWarning: payment.financialSnapshotWarning ?? null,
     createdAt: payment.createdAt,
     updatedAt: payment.updatedAt,
+  };
+}
+
+function buildPaymentTransactionDetail(
+  context: PaymentTransactionContext,
+  approvedGrossByReservation: Map<string, number>,
+) {
+  return {
+    ...buildPaymentTransactionRow(context, approvedGrossByReservation),
+    customerEmail:
+      context.customer?.email ?? context.booking?.customerEmail ?? null,
+    bookingStatus: context.booking?.bookingStatus ?? null,
+    currency: context.payment.currency ?? null,
   };
 }
 

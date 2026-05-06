@@ -6,7 +6,7 @@ import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { api } from "@/convex/_generated/api";
-import { formatCOP } from "@/lib/format";
+import { formatBookingStatus, formatCOP, formatCurrencyCode } from "@/lib/format";
 import { AdminLayout } from "./AdminLayout";
 
 type PaymentTransactionsArgs = FunctionArgs<
@@ -713,13 +713,16 @@ function PaymentDetailSections({ detail }: { detail: PaymentDetail }) {
           label="Valor reserva"
           value={formatNullableCOP(detail.totalReservationAmount)}
         />
-        <DetailRow label="Estado reserva" value="No disponible" />
+        <DetailRow
+          label="Estado reserva"
+          value={formatBookingStatus(detail.bookingStatus)}
+        />
       </DetailSection>
 
       <DetailSection title="Cliente">
         <DetailRow label="Cliente" value={formatText(detail.customerName)} />
         <DetailRow label="Celular" value={formatText(detail.customerPhone)} />
-        <DetailRow label="Email" value="No disponible" />
+        <DetailRow label="Email" value={formatText(detail.customerEmail)} />
       </DetailSection>
 
       <DetailSection title="Datos Mercado Pago">
@@ -743,7 +746,7 @@ function PaymentDetailSections({ detail }: { detail: PaymentDetail }) {
           mono
         />
         <DetailRow label="Cuotas" value={formatInstallments(detail.installments)} />
-        <DetailRow label="Moneda" value="No disponible" />
+        <DetailRow label="Moneda" value={formatCurrencyCode(detail.currency)} />
         <DetailRow label="Creado" value={formatReadableDate(detail.createdAt)} />
         <DetailRow
           label="Actualizado"
