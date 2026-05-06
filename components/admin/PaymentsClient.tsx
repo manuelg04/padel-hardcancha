@@ -8,6 +8,7 @@ import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "@/convex/_generated/api";
 import { formatBookingStatus, formatCOP, formatCurrencyCode } from "@/lib/format";
 import {
+  calculatePaymentTransactionRowKpis,
   isCollectedPaymentStatus,
   isPendingPaymentAttemptStatus,
 } from "@/lib/paymentTransactionRules";
@@ -203,7 +204,7 @@ function PaymentsContent() {
         <LoadingState />
       ) : (
         <>
-          <KpiGrid kpis={transactions.kpis} />
+          <KpiGrid rows={transactions.rows} />
           <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white shadow-[var(--shadow-sm)]">
             <div className="border-b border-[var(--ink-200)] p-4">
               <h2 className="text-lg font-black">Transacciones</h2>
@@ -333,7 +334,8 @@ function Filters({
   );
 }
 
-function KpiGrid({ kpis }: { kpis: PaymentTransactionsResult["kpis"] }) {
+function KpiGrid({ rows }: { rows: PaymentRow[] }) {
+  const kpis = useMemo(() => calculatePaymentTransactionRowKpis(rows), [rows]);
   const items = [
     {
       label: "Cobrado online bruto",

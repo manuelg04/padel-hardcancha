@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  calculatePaymentTransactionRowKpis,
   calculatePaymentTransactionsKpis,
   calculatePendingAmountAtReception,
   isPendingPaymentAttemptStatus,
@@ -236,6 +237,61 @@ describe("payment transaction calculations", () => {
       approvedPaymentCount: 2,
       pendingAttemptCount: 1,
       transactionCount: 3,
+    });
+  });
+
+  test("row-based KPI shape matches the payments screen scenario", () => {
+    expect(
+      calculatePaymentTransactionRowKpis([
+        {
+          reservationId: "reservation-1",
+          status: "approved",
+          type: "deposit",
+          grossAmount: 30000,
+          totalDeductionsAmount: 2702.2,
+          netReceivedAmount: 27297.8,
+          financialSnapshotStatus: "complete",
+          totalReservationAmount: 60000,
+        },
+        {
+          reservationId: "reservation-2",
+          status: "approved",
+          type: "deposit",
+          grossAmount: 30000,
+          totalDeductionsAmount: 2702.2,
+          netReceivedAmount: 27297.8,
+          financialSnapshotStatus: "complete",
+          totalReservationAmount: 75000,
+        },
+        {
+          reservationId: "reservation-3",
+          status: "created",
+          type: "deposit",
+          grossAmount: 30000,
+          totalReservationAmount: 60000,
+        },
+      ]),
+    ).toEqual({
+      grossCollectedAmount: 60000,
+      gatewayDeductionsAmount: 5404.4,
+      netReceivedAmount: 54595.6,
+      pendingReceptionAmount: 75000,
+      transactionCount: 3,
+      approvedPaymentCount: 2,
+      pendingAttemptCount: 1,
+      depositCount: 3,
+      fullPaymentCount: 0,
+      missingFinancialBreakdownCount: 0,
+    });
+  });
+
+  test("row-based KPI counts stay numeric for empty payment results", () => {
+    expect(calculatePaymentTransactionRowKpis([])).toMatchObject({
+      pendingReceptionAmount: 0,
+      transactionCount: 0,
+      approvedPaymentCount: 0,
+      pendingAttemptCount: 0,
+      missingFinancialBreakdownCount: 0,
     });
   });
 });

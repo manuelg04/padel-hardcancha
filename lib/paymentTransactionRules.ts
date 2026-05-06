@@ -26,6 +26,13 @@ export type PaymentTransactionSummaryInput = {
   totalReservationAmount: number;
 };
 
+export type PaymentTransactionRowKpiInput = Omit<
+  PaymentTransactionSummaryInput,
+  "amount"
+> & {
+  grossAmount?: number | null;
+};
+
 export type PaymentTransactionsKpis = {
   grossCollectedAmount: number;
   gatewayDeductionsAmount: number;
@@ -146,6 +153,17 @@ export function calculatePaymentTransactionsKpis(
   }
 
   return totals;
+}
+
+export function calculatePaymentTransactionRowKpis(
+  rows: PaymentTransactionRowKpiInput[],
+) {
+  return calculatePaymentTransactionsKpis(
+    rows.map((row) => ({
+      ...row,
+      amount: row.grossAmount ?? 0,
+    })),
+  );
 }
 
 function getDeductionsAmountForCalculations(payment: PaymentTransactionSummaryInput) {
