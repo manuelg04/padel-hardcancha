@@ -1,4 +1,5 @@
 import type { Id } from "./_generated/dataModel";
+import { sanitizeMercadoPagoOAuthMessage } from "../lib/mercadoPagoOAuthRules";
 
 const MERCADO_PAGO_API_BASE = "https://api.mercadopago.com";
 
@@ -43,6 +44,18 @@ export type MercadoPagoPaymentResponse = {
   installments?: number;
 };
 
+export class MercadoPagoApiError extends Error {
+  status: number;
+  safeMessage: string;
+
+  constructor(status: number, safeMessage: string) {
+    super(`Mercado Pago error ${status}: ${safeMessage}`);
+    this.name = "MercadoPagoApiError";
+    this.status = status;
+    this.safeMessage = safeMessage;
+  }
+}
+
 function getAppBaseUrl() {
   const vercelUrl =
     process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
@@ -75,14 +88,21 @@ async function mercadoPagoRequest<T>(
   const parsed = text ? tryParseJson(text) : null;
 
   if (!response.ok) {
-    const message =
+    const rawMessage =
       parsed && typeof parsed === "object" && "message" in parsed
         ? String(parsed.message)
         : "Mercado Pago no pudo procesar la solicitud.";
-    throw new Error(`Mercado Pago error ${response.status}: ${message}`);
+    throw new MercadoPagoApiError(
+      response.status,
+      sanitizeMercadoPagoOAuthMessage(rawMessage),
+    );
   }
 
   return parsed as T;
+}
+
+export function isMercadoPagoUnauthorizedError(error: unknown) {
+  return error instanceof MercadoPagoApiError && error.status === 401;
 }
 
 function tryParseJson(value: string) {

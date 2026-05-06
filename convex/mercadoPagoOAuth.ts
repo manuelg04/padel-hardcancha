@@ -1,6 +1,17 @@
 import { ConvexError, v } from "convex/values";
 
 import {
+  MERCADO_PAGO_RECONNECT_MESSAGE,
+  buildMercadoPagoRefreshFailurePatch,
+  buildMercadoPagoRefreshSuccessPatch,
+  classifyMercadoPagoRefreshFailureStatus,
+  getMercadoPagoConnectionSource,
+  shouldRefreshMercadoPagoOAuthAccessToken,
+  validateMercadoPagoOAuthTokenFields,
+  type MercadoPagoConnectionSource,
+  type MercadoPagoConnectionStatus,
+} from "../lib/mercadoPagoAccessTokenRules";
+import {
   mapMercadoPagoOAuthStateErrorReason,
   type MercadoPagoOAuthFailureReason,
 } from "../lib/mercadoPagoOAuthRouteRules";
@@ -14,11 +25,21 @@ import {
   validateMercadoPagoOAuthStateForConsumption,
 } from "../lib/mercadoPagoOAuthRules";
 import { internal } from "./_generated/api";
-import { action, internalMutation, mutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+} from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { getCurrentUserClub, requireClubAccess } from "./access";
-import { exchangeMercadoPagoAuthorizationCode } from "./mercadoPagoOAuthClient";
-import { encryptSecretString } from "./secretCrypto";
+import {
+  exchangeMercadoPagoAuthorizationCode,
+  refreshMercadoPagoOAuthToken,
+} from "./mercadoPagoOAuthClient";
+import { decryptSecretString, encryptSecretString } from "./secretCrypto";
 
 const mercadoPagoOAuthFailureReasonValidator = v.union(
   v.literal("missing_state"),
@@ -46,6 +67,40 @@ const completeCallbackResultValidator = v.union(
   }),
 );
 
+const mercadoPagoConnectionSourceValidator = v.union(
+  v.literal("manual"),
+  v.literal("oauth"),
+);
+
+const mercadoPagoConnectionFailureStatusValidator = v.union(
+  v.literal("expired"),
+  v.literal("error"),
+);
+
+const validMercadoPagoAccessTokenResultValidator = v.object({
+  accessToken: v.string(),
+  connectionSource: mercadoPagoConnectionSourceValidator,
+  mpUserId: v.optional(v.string()),
+  expiresAt: v.optional(v.number()),
+});
+
+const mercadoPagoConnectionForTokenValidator = v.object({
+  _id: v.id("mercadoPagoConnections"),
+  clubId: v.id("clubs"),
+  status: v.string(),
+  connectionSource: v.optional(mercadoPagoConnectionSourceValidator),
+  accessToken: v.optional(v.string()),
+  accessTokenEncrypted: v.optional(v.string()),
+  refreshTokenEncrypted: v.optional(v.string()),
+  publicKey: v.optional(v.string()),
+  tokenType: v.optional(v.string()),
+  accessTokenExpiresAt: v.optional(v.number()),
+  liveMode: v.optional(v.boolean()),
+  scope: v.optional(v.string()),
+  mpUserId: v.optional(v.string()),
+  collectorId: v.optional(v.string()),
+});
+
 type CompleteMercadoPagoOAuthCallbackResult =
   | {
       ok: true;
@@ -56,6 +111,30 @@ type CompleteMercadoPagoOAuthCallbackResult =
       reason: MercadoPagoOAuthFailureReason;
       redirectAfterSuccess?: string;
     };
+
+type MercadoPagoConnectionForToken = {
+  _id: Id<"mercadoPagoConnections">;
+  clubId: Id<"clubs">;
+  status: MercadoPagoConnectionStatus;
+  connectionSource?: MercadoPagoConnectionSource;
+  accessToken?: string;
+  accessTokenEncrypted?: string;
+  refreshTokenEncrypted?: string;
+  publicKey?: string;
+  tokenType?: string;
+  accessTokenExpiresAt?: number;
+  liveMode?: boolean;
+  scope?: string;
+  mpUserId?: string;
+  collectorId?: string;
+};
+
+type ValidMercadoPagoAccessTokenResult = {
+  accessToken: string;
+  connectionSource: MercadoPagoConnectionSource;
+  mpUserId?: string;
+  expiresAt?: number;
+};
 
 export const createMercadoPagoOAuthState = mutation({
   args: {
@@ -84,6 +163,217 @@ export const createMercadoPagoOAuthState = mutation({
       state,
       expiresAt: insert.expiresAt,
     };
+  },
+});
+
+export const getValidMercadoPagoAccessTokenForClub = internalAction({
+  args: {
+    clubId: v.id("clubs"),
+    forceRefresh: v.optional(v.boolean()),
+    reason: v.optional(v.string()),
+  },
+  returns: validMercadoPagoAccessTokenResultValidator,
+  handler: async (ctx, args): Promise<ValidMercadoPagoAccessTokenResult> => {
+    const connection = await ctx.runQuery(
+      internal.mercadoPagoOAuth.getMercadoPagoConnectionForToken,
+      { clubId: args.clubId },
+    );
+
+    if (!connection || connection.status !== "connected") {
+      throwReconnectRequired();
+    }
+
+    const connectionSource = getMercadoPagoConnectionSource(connection);
+
+    if (connectionSource === "manual") {
+      const accessToken = connection.accessToken?.trim();
+
+      if (!accessToken) {
+        throwReconnectRequired();
+      }
+
+      return {
+        accessToken,
+        connectionSource,
+        mpUserId: connection.mpUserId,
+        expiresAt: connection.accessTokenExpiresAt,
+      };
+    }
+
+    if (connectionSource !== "oauth") {
+      throwReconnectRequired();
+    }
+
+    const now = Date.now();
+    const mustRefresh = shouldRefreshMercadoPagoOAuthAccessToken({
+      now,
+      expiresAt: connection.accessTokenExpiresAt,
+      forceRefresh: args.forceRefresh,
+    });
+    const readiness = validateMercadoPagoOAuthTokenFields(connection, {
+      requireRefreshToken: mustRefresh,
+    });
+
+    if (!readiness.ok) {
+      await markTokenFailure(ctx, args.clubId, readiness.status, readiness.message);
+      throwReconnectRequired();
+    }
+
+    if (mustRefresh) {
+      return await refreshMercadoPagoConnectionTokenForConnection(ctx, connection);
+    }
+
+    try {
+      return {
+        accessToken: await decryptSecretString(connection.accessTokenEncrypted!),
+        connectionSource,
+        mpUserId: connection.mpUserId,
+        expiresAt: connection.accessTokenExpiresAt,
+      };
+    } catch (error) {
+      await markTokenFailure(ctx, args.clubId, "error", safeErrorMessage(error));
+      throwReconnectRequired();
+    }
+  },
+});
+
+export const refreshMercadoPagoConnectionToken = internalAction({
+  args: {
+    clubId: v.id("clubs"),
+    reason: v.optional(v.string()),
+  },
+  returns: validMercadoPagoAccessTokenResultValidator,
+  handler: async (ctx, args): Promise<ValidMercadoPagoAccessTokenResult> => {
+    const connection = await ctx.runQuery(
+      internal.mercadoPagoOAuth.getMercadoPagoConnectionForToken,
+      { clubId: args.clubId },
+    );
+
+    if (!connection || connection.status !== "connected") {
+      throwReconnectRequired();
+    }
+
+    if (getMercadoPagoConnectionSource(connection) !== "oauth") {
+      throwReconnectRequired();
+    }
+
+    return await refreshMercadoPagoConnectionTokenForConnection(ctx, connection);
+  },
+});
+
+export const getMercadoPagoConnectionForToken = internalQuery({
+  args: { clubId: v.id("clubs") },
+  returns: v.union(v.null(), mercadoPagoConnectionForTokenValidator),
+  handler: async (ctx, args): Promise<MercadoPagoConnectionForToken | null> => {
+    const connection = await ctx.db
+      .query("mercadoPagoConnections")
+      .withIndex("by_club", (q) => q.eq("clubId", args.clubId))
+      .unique();
+
+    if (!connection) return null;
+
+    return {
+      _id: connection._id,
+      clubId: connection.clubId,
+      status: connection.status,
+      connectionSource: connection.connectionSource,
+      accessToken: connection.accessToken,
+      accessTokenEncrypted: connection.accessTokenEncrypted,
+      refreshTokenEncrypted: connection.refreshTokenEncrypted,
+      publicKey: connection.publicKey,
+      tokenType: connection.tokenType,
+      accessTokenExpiresAt: connection.accessTokenExpiresAt,
+      liveMode: connection.liveMode,
+      scope: connection.scope,
+      mpUserId: connection.mpUserId,
+      collectorId: connection.collectorId,
+    };
+  },
+});
+
+export const saveMercadoPagoOAuthRefreshResult = internalMutation({
+  args: {
+    clubId: v.id("clubs"),
+    accessTokenEncrypted: v.string(),
+    refreshTokenEncrypted: v.string(),
+    expiresIn: v.number(),
+    publicKey: v.optional(v.string()),
+    liveMode: v.optional(v.boolean()),
+    mpUserId: v.optional(v.string()),
+    tokenType: v.optional(v.string()),
+    scope: v.optional(v.string()),
+  },
+  returns: v.object({
+    expiresAt: v.number(),
+    mpUserId: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const connection = await ctx.db
+      .query("mercadoPagoConnections")
+      .withIndex("by_club", (q) => q.eq("clubId", args.clubId))
+      .unique();
+
+    if (!connection || connection.connectionSource !== "oauth") {
+      throwReconnectRequired();
+    }
+
+    const patch = buildMercadoPagoRefreshSuccessPatch({
+      now,
+      accessTokenEncrypted: args.accessTokenEncrypted,
+      refreshTokenEncrypted: args.refreshTokenEncrypted,
+      expiresIn: args.expiresIn,
+      publicKey: args.publicKey,
+      liveMode: args.liveMode,
+      mpUserId: args.mpUserId,
+      tokenType: args.tokenType,
+      scope: args.scope,
+    });
+
+    await ctx.db.patch(connection._id, patch);
+    await ctx.db.patch(args.clubId, {
+      mercadoPagoConnectionStatus: "connected",
+      updatedAt: now,
+    });
+
+    return {
+      expiresAt: patch.accessTokenExpiresAt,
+      mpUserId: args.mpUserId ?? connection.mpUserId,
+    };
+  },
+});
+
+export const markMercadoPagoConnectionTokenUseFailed = internalMutation({
+  args: {
+    clubId: v.id("clubs"),
+    status: mercadoPagoConnectionFailureStatusValidator,
+    errorMessage: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const connection = await ctx.db
+      .query("mercadoPagoConnections")
+      .withIndex("by_club", (q) => q.eq("clubId", args.clubId))
+      .unique();
+
+    if (!connection) return null;
+
+    const now = Date.now();
+
+    await ctx.db.patch(
+      connection._id,
+      buildMercadoPagoRefreshFailurePatch({
+        now,
+        status: args.status,
+        errorMessage: args.errorMessage,
+      }),
+    );
+    await ctx.db.patch(args.clubId, {
+      mercadoPagoConnectionStatus: args.status,
+      updatedAt: now,
+    });
+
+    return null;
   },
 });
 
@@ -278,6 +568,118 @@ function isMissingEnvError(error: unknown) {
     error.message.includes("MERCADOPAGO_CLIENT_SECRET is required") ||
     error.message.includes("MERCADOPAGO_TOKEN_ENCRYPTION_KEY")
   );
+}
+
+async function refreshMercadoPagoConnectionTokenForConnection(
+  ctx: ActionCtx,
+  connection: MercadoPagoConnectionForToken,
+): Promise<ValidMercadoPagoAccessTokenResult> {
+  const readiness = validateMercadoPagoOAuthTokenFields(connection, {
+    requireRefreshToken: true,
+  });
+
+  if (!readiness.ok) {
+    await markTokenFailure(ctx, connection.clubId, readiness.status, readiness.message);
+    throwReconnectRequired();
+  }
+
+  let refreshToken;
+
+  try {
+    refreshToken = await decryptSecretString(connection.refreshTokenEncrypted!);
+  } catch (error) {
+    await markTokenFailure(ctx, connection.clubId, "error", safeErrorMessage(error));
+    throwReconnectRequired();
+  }
+
+  let tokens;
+
+  try {
+    tokens = await refreshMercadoPagoOAuthToken({ refreshToken });
+  } catch (error) {
+    await markTokenFailure(
+      ctx,
+      connection.clubId,
+      classifyMercadoPagoRefreshFailureStatus(error),
+      safeErrorMessage(error),
+    );
+    throwReconnectRequired();
+  }
+
+  let accessTokenEncrypted;
+  let refreshTokenEncrypted;
+
+  try {
+    accessTokenEncrypted = await encryptSecretString(tokens.accessToken);
+    refreshTokenEncrypted = tokens.refreshToken
+      ? await encryptSecretString(tokens.refreshToken)
+      : connection.refreshTokenEncrypted!;
+  } catch (error) {
+    await markTokenFailure(ctx, connection.clubId, "error", safeErrorMessage(error));
+    throwReconnectRequired();
+  }
+
+  let saved;
+
+  try {
+    saved = await ctx.runMutation(
+      internal.mercadoPagoOAuth.saveMercadoPagoOAuthRefreshResult,
+      {
+        clubId: connection.clubId,
+        accessTokenEncrypted,
+        refreshTokenEncrypted,
+        expiresIn: tokens.expiresIn,
+        publicKey: tokens.publicKey,
+        liveMode: tokens.liveMode,
+        mpUserId: tokens.mpUserId,
+        tokenType: tokens.tokenType,
+        scope: tokens.scope,
+      },
+    );
+  } catch (error) {
+    await markTokenFailure(ctx, connection.clubId, "error", safeErrorMessage(error));
+    throwReconnectRequired();
+  }
+
+  return {
+    accessToken: tokens.accessToken,
+    connectionSource: "oauth",
+    mpUserId: saved.mpUserId,
+    expiresAt: saved.expiresAt,
+  };
+}
+
+async function markTokenFailure(
+  ctx: ActionCtx,
+  clubId: Id<"clubs">,
+  status: Extract<MercadoPagoConnectionStatus, "expired" | "error">,
+  errorMessage: string,
+) {
+  try {
+    await ctx.runMutation(
+      internal.mercadoPagoOAuth.markMercadoPagoConnectionTokenUseFailed,
+      {
+        clubId,
+        status,
+        errorMessage,
+      },
+    );
+  } catch {
+    return null;
+  }
+}
+
+function safeErrorMessage(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : "Mercado Pago token handling failed.";
+}
+
+function throwReconnectRequired(): never {
+  throw new ConvexError({
+    code: "MERCADOPAGO_RECONNECT_REQUIRED",
+    message: MERCADO_PAGO_RECONNECT_MESSAGE,
+  });
 }
 
 export const markMercadoPagoOAuthStateError = internalMutation({

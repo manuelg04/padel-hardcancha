@@ -1,7 +1,18 @@
 "use client";
 
-import { AlertCircle, Check, CreditCard, PlugZap, Plus, Save } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  CreditCard,
+  PlugZap,
+  Plus,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  Unplug,
+} from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { api } from "@/convex/_generated/api";
@@ -12,6 +23,13 @@ import {
   minutesToTime,
 } from "@/lib/dates";
 import { formatCOP } from "@/lib/format";
+import {
+  buildMercadoPagoConfigConnectionView,
+  buildMercadoPagoConnectionMetadata,
+  formatMercadoPagoConnectionStatusLabel,
+  getMercadoPagoOAuthResultMessage,
+  type MercadoPagoOAuthResultMessage,
+} from "@/lib/mercadoPagoConfigUiRules";
 import { normalizeMercadoPagoConnectionInput } from "@/lib/mercadoPagoConnectionRules";
 import { AdminLayout } from "./AdminLayout";
 
@@ -29,12 +47,28 @@ type OnlineDepositStatus = {
   allowPayAtClub: boolean;
   mercadoPagoConnected: boolean;
   mercadoPagoConnectionStatus: string;
+  connectionSource: "manual" | "oauth" | null;
+  collectorId?: string | null;
+  mpUserId: string | null;
+  liveMode: boolean | null;
+  accessTokenExpiresAt: number | null;
+  lastRefreshAt: number | null;
+  refreshError: string | null;
+  refreshErrorAt: number | null;
   canManageConnection: boolean;
 };
 
 const dayLabels = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
+const MERCADO_PAGO_OAUTH_START_URL =
+  "/api/mercadopago/oauth/start?redirectAfterSuccess=/admin/config";
+
 export function ConfigClient() {
+  const searchParams = useSearchParams();
+  const oauthResultMessage = getMercadoPagoOAuthResultMessage({
+    result: searchParams.get("mp_oauth"),
+    reason: searchParams.get("reason"),
+  });
   const club = useQuery(api.clubs.getCurrentUserClubForAdmin, {});
   const courts = useQuery(
     api.courts.listCourtsByClub,
@@ -53,6 +87,8 @@ export function ConfigClient() {
             Información visible para jugadores, precios y canchas.
           </p>
         </header>
+
+        <OAuthResultAlert result={oauthResultMessage} />
 
         {club === undefined || courts === undefined ? (
           <div className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-8 text-center font-bold text-[var(--ink-500)]">
@@ -73,6 +109,30 @@ export function ConfigClient() {
         )}
       </div>
     </AdminLayout>
+  );
+}
+
+function OAuthResultAlert({
+  result,
+}: {
+  result: MercadoPagoOAuthResultMessage | null;
+}) {
+  if (!result) return null;
+
+  const isSuccess = result.kind === "success";
+  const Icon = isSuccess ? Check : AlertCircle;
+
+  return (
+    <div
+      className={`mb-5 flex gap-2 rounded-[var(--r-md)] p-3 text-sm font-bold ${
+        isSuccess
+          ? "bg-[var(--status-paid-bg)] text-[var(--status-paid-fg)]"
+          : "bg-red-50 text-red-700"
+      }`}
+    >
+      <Icon size={17} className="mt-0.5 shrink-0" />
+      <span>{result.message}</span>
+    </div>
   );
 }
 
@@ -98,6 +158,16 @@ function OnlineDepositsForm({
   const updateSettings = useMutation(api.payments.updateClubDepositSettings);
   const connect = useMutation(api.payments.connectMercadoPagoAccessToken);
   const disconnect = useMutation(api.payments.disconnectMercadoPago);
+  const connectionView = buildMercadoPagoConfigConnectionView(status);
+  const connectionMetadata = buildMercadoPagoConnectionMetadata(status);
+  const connectionBadgeClassName = getMercadoPagoConnectionBadgeClassName(
+    connectionView.kind,
+  );
+  const showDisconnectButton =
+    status.canManageConnection && connectionView.kind !== "not_connected";
+  const [manualConnectionOpen, setManualConnectionOpen] = useState(
+    connectionView.kind === "manual_connected",
+  );
   const [accessToken, setAccessToken] = useState("");
   const [collectorId, setCollectorId] = useState("");
   const [onlineDepositsEnabled, setOnlineDepositsEnabled] = useState(
@@ -147,9 +217,22 @@ function OnlineDepositsForm({
       );
       setAccessToken("");
       setCollectorId("");
+      setManualConnectionOpen(true);
       setMessage("Mercado Pago conectado.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No pudimos conectar.");
+    }
+  }
+
+  async function disconnectConnection() {
+    setError("");
+    setMessage("");
+
+    try {
+      await disconnect();
+      setMessage("Mercado Pago desconectado. Los pagos históricos se conservan.");
+    } catch {
+      setError("No pudimos desconectar Mercado Pago.");
     }
   }
 
@@ -183,58 +266,134 @@ function OnlineDepositsForm({
     <section className="rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-5 shadow-[var(--shadow-sm)]">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-black">Anticipos online</h2>
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={20} className="text-[var(--court-600)]" />
+            <h2 className="text-xl font-black">Mercado Pago</h2>
+          </div>
           <p className="text-sm text-[var(--ink-500)]">
-            Mercado Pago del club y abonos opcionales.
+            Pagos online del club y anticipos opcionales.
           </p>
         </div>
-        <span
-          className={`pill ${
-            status.mercadoPagoConnected ? "pill-available" : "pill-pending"
-          }`}
-        >
+        <span className={`pill ${connectionBadgeClassName}`}>
           <span className="dot" />
-          {status.mercadoPagoConnected ? "Conectado" : "Sin conectar"}
+          {connectionView.badgeLabel}
         </span>
       </div>
 
-      {status.canManageConnection ? (
-        <form className="mb-5 grid gap-3" onSubmit={saveConnection}>
-          <div className="field">
-            <label>Access token del club</label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={accessToken}
-              onChange={(event) => setAccessToken(event.target.value)}
-              placeholder="APP_USR-..."
+      <div className="mb-5 grid gap-4">
+        <div>
+          <p className="text-sm text-[var(--ink-700)]">{connectionView.message}</p>
+          <p className="mt-2 text-sm text-[var(--ink-500)]">
+            Los pagos online se procesan directamente en la cuenta de Mercado Pago
+            del club. Nuestra plataforma no retiene el dinero; solo registra la
+            transacción para mostrar anticipos, cargos, neto recibido y saldo
+            pendiente.
+          </p>
+          <p className="mt-2 text-sm text-[var(--ink-500)]">
+            OAuth permite conectar Mercado Pago sin copiar access tokens y facilita
+            la renovación segura de credenciales.
+          </p>
+        </div>
+
+        <div className="grid gap-2 text-sm md:grid-cols-2">
+          <ConnectionDetail
+            label="Estado"
+            value={formatMercadoPagoConnectionStatusLabel(
+              status.mercadoPagoConnectionStatus,
+            )}
+          />
+          {connectionMetadata.map((item) => (
+            <ConnectionDetail
+              key={`${item.label}-${item.value}`}
+              label={item.label}
+              value={item.value}
             />
+          ))}
+        </div>
+
+        {connectionView.kind === "reconnect_required" ? (
+          <div className="flex gap-2 rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
+            <AlertCircle size={17} className="mt-0.5 shrink-0" />
+            <span>
+              Detectamos un problema con la conexión. Vuelve a conectar Mercado
+              Pago para mantener activos los pagos online.
+            </span>
           </div>
-          <div className="field">
-            <label>ID Mercado Pago opcional</label>
-            <input
-              autoComplete="off"
-              value={collectorId}
-              onChange={(event) => setCollectorId(event.target.value)}
-            />
-          </div>
+        ) : null}
+
+        {status.canManageConnection ? (
           <div className="flex flex-wrap gap-2">
-            <button className="btn btn-dark" type="submit">
-              <PlugZap size={17} />
-              Conectar
-            </button>
-            {status.mercadoPagoConnected ? (
+            <a className="btn btn-primary" href={MERCADO_PAGO_OAUTH_START_URL}>
+              {connectionView.kind === "not_connected" ? (
+                <PlugZap size={17} />
+              ) : (
+                <RefreshCw size={17} />
+              )}
+              {connectionView.primaryActionLabel}
+            </a>
+            {showDisconnectButton ? (
               <button
                 className="btn btn-ghost"
                 type="button"
-                onClick={() => disconnect()}
+                onClick={disconnectConnection}
               >
+                <Unplug size={17} />
                 Desconectar
               </button>
             ) : null}
           </div>
-        </form>
-      ) : null}
+        ) : (
+          <p className="rounded-[var(--r-md)] bg-[var(--ink-50)] p-3 text-sm font-bold text-[var(--ink-600)]">
+            Solo el administrador principal del club puede conectar o desconectar
+            Mercado Pago.
+          </p>
+        )}
+
+        {status.canManageConnection ? (
+          <details
+            className="border-t border-[var(--ink-200)] pt-4"
+            open={manualConnectionOpen}
+            onToggle={(event) =>
+              setManualConnectionOpen(event.currentTarget.open)
+            }
+          >
+            <summary className="cursor-pointer text-sm font-black text-[var(--ink-700)]">
+              Conexión manual avanzada
+            </summary>
+            <div className="mt-3 grid gap-3">
+              <p className="text-sm text-[var(--ink-500)]">
+                Usa este método solo para pruebas internas o soporte. Para clubes,
+                recomendamos OAuth. El método manual funciona para pruebas, pero no
+                renueva tokens automáticamente.
+              </p>
+              <form className="grid gap-3" onSubmit={saveConnection}>
+                <div className="field">
+                  <label>Access token del club</label>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={accessToken}
+                    onChange={(event) => setAccessToken(event.target.value)}
+                    placeholder="APP_USR-..."
+                  />
+                </div>
+                <div className="field">
+                  <label>ID Mercado Pago opcional</label>
+                  <input
+                    autoComplete="off"
+                    value={collectorId}
+                    onChange={(event) => setCollectorId(event.target.value)}
+                  />
+                </div>
+                <button className="btn btn-dark w-fit" type="submit">
+                  <PlugZap size={17} />
+                  Conectar manualmente
+                </button>
+              </form>
+            </div>
+          </details>
+        ) : null}
+      </div>
 
       {!status.mercadoPagoConnected && onlineDepositsEnabled ? (
         <div className="mb-4 flex gap-2 rounded-[var(--r-md)] bg-[var(--status-pending-bg)] p-3 text-sm font-bold text-[var(--status-pending-fg)]">
@@ -243,7 +402,27 @@ function OnlineDepositsForm({
         </div>
       ) : null}
 
-      <form className="grid gap-4" onSubmit={saveDepositSettings}>
+      {error ? (
+        <p className="mb-4 rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
+          {error}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="mb-4 rounded-[var(--r-md)] bg-[var(--status-paid-bg)] p-3 text-sm font-bold text-[var(--status-paid-fg)]">
+          {message}
+        </p>
+      ) : null}
+
+      <form
+        className="grid gap-4 border-t border-[var(--ink-200)] pt-5"
+        onSubmit={saveDepositSettings}
+      >
+        <div>
+          <h3 className="font-black">Anticipos online</h3>
+          <p className="text-sm text-[var(--ink-500)]">
+            Reglas del anticipo opcional que puede pagar el jugador al reservar.
+          </p>
+        </div>
         <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold">
           <input
             className="mt-1 accent-[var(--court-500)]"
@@ -322,17 +501,6 @@ function OnlineDepositsForm({
           Permitir reservar sin anticipo
         </label>
 
-        {error ? (
-          <p className="rounded-[var(--r-md)] bg-red-50 p-3 text-sm font-bold text-red-700">
-            {error}
-          </p>
-        ) : null}
-        {message ? (
-          <p className="rounded-[var(--r-md)] bg-[var(--status-paid-bg)] p-3 text-sm font-bold text-[var(--status-paid-fg)]">
-            {message}
-          </p>
-        ) : null}
-
         <button className="btn btn-primary" type="submit">
           <CreditCard size={17} />
           Guardar anticipos
@@ -340,6 +508,24 @@ function OnlineDepositsForm({
       </form>
     </section>
   );
+}
+
+function ConnectionDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[var(--r-md)] bg-[var(--ink-50)] px-3 py-2">
+      <p className="text-xs font-bold text-[var(--ink-500)]">{label}</p>
+      <p className="break-words font-black text-[var(--ink-900)]">{value}</p>
+    </div>
+  );
+}
+
+function getMercadoPagoConnectionBadgeClassName(
+  kind: ReturnType<typeof buildMercadoPagoConfigConnectionView>["kind"],
+) {
+  if (kind === "oauth_connected") return "pill-available";
+  if (kind === "manual_connected") return "pill-pending";
+  if (kind === "reconnect_required") return "pill-blocked";
+  return "pill-pending";
 }
 
 function ClubSettingsForm({ club }: { club: Doc<"clubs"> }) {

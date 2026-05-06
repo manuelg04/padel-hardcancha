@@ -10,6 +10,13 @@ import {
 } from "../lib/depositRules";
 import { extractMercadoPagoFinancialSnapshot } from "../lib/mercadoPagoFinancialRules";
 import {
+  MERCADO_PAGO_RECONNECT_MESSAGE,
+  buildMercadoPagoSafeConnectionStatusFields,
+  hasUsableMercadoPagoConnection,
+  shouldRetryMercadoPagoUnauthorizedOperation,
+  type MercadoPagoConnectionSource,
+} from "../lib/mercadoPagoAccessTokenRules";
+import {
   buildManualMercadoPagoConnectionPatch,
   buildMercadoPagoDisconnectPatch,
   normalizeMercadoPagoConnectionInput,
@@ -25,17 +32,18 @@ import {
   createMercadoPagoDepositPreference,
   getMercadoPagoCheckoutUrl,
   getMercadoPagoPayment,
+  isMercadoPagoUnauthorizedError,
+  MercadoPagoApiError,
 } from "./mercadoPagoClient";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
-  internalQuery,
   mutation,
   query,
 } from "./_generated/server";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "./_generated/server";
 import {
   assertCanBook,
   buildBookingCode,
@@ -110,8 +118,23 @@ type DepositPreparation = {
   customerPhone: string;
   customerEmail?: string;
   amount: number;
-  accessToken: string;
 };
+
+type MercadoPagoAccessTokenForOperation = {
+  accessToken: string;
+  connectionSource: MercadoPagoConnectionSource;
+  mpUserId?: string;
+  expiresAt?: number;
+};
+
+const nullableNumberValidator = v.union(v.number(), v.null());
+const nullableStringValidator = v.union(v.string(), v.null());
+const nullableBooleanValidator = v.union(v.boolean(), v.null());
+const nullableMercadoPagoConnectionSourceValidator = v.union(
+  v.literal("manual"),
+  v.literal("oauth"),
+  v.null(),
+);
 
 const connectionStatusValidator = v.object({
   clubId: v.id("clubs"),
@@ -127,11 +150,15 @@ const connectionStatusValidator = v.object({
   allowPayAtClub: v.boolean(),
   mercadoPagoConnected: v.boolean(),
   mercadoPagoConnectionStatus: v.string(),
+  connectionSource: nullableMercadoPagoConnectionSourceValidator,
+  mpUserId: nullableStringValidator,
+  liveMode: nullableBooleanValidator,
+  accessTokenExpiresAt: nullableNumberValidator,
+  lastRefreshAt: nullableNumberValidator,
+  refreshError: nullableStringValidator,
+  refreshErrorAt: nullableNumberValidator,
   canManageConnection: v.boolean(),
 });
-
-const nullableNumberValidator = v.union(v.number(), v.null());
-const nullableStringValidator = v.union(v.string(), v.null());
 
 const paymentTransactionRowFields = {
   id: v.id("reservationPayments"),
@@ -189,11 +216,15 @@ const paymentTransactionKpisValidator = v.object({
   missingFinancialBreakdownCount: v.number(),
 });
 
-async function getActiveMercadoPagoConnection(ctx: Ctx, clubId: Id<"clubs">) {
-  const connection = await ctx.db
+async function getMercadoPagoConnection(ctx: Ctx, clubId: Id<"clubs">) {
+  return await ctx.db
     .query("mercadoPagoConnections")
     .withIndex("by_club", (q) => q.eq("clubId", clubId))
     .unique();
+}
+
+async function getActiveMercadoPagoConnection(ctx: Ctx, clubId: Id<"clubs">) {
+  const connection = await getMercadoPagoConnection(ctx, clubId);
 
   if (!connection || connection.status !== "connected") {
     return null;
@@ -202,18 +233,112 @@ async function getActiveMercadoPagoConnection(ctx: Ctx, clubId: Id<"clubs">) {
   return connection;
 }
 
-async function getClubAccessToken(ctx: Ctx, clubId: Id<"clubs">) {
-  const connection = await getActiveMercadoPagoConnection(ctx, clubId);
-  const accessToken = connection?.accessToken?.trim();
+async function getValidMercadoPagoTokenForOperation(
+  ctx: ActionCtx,
+  clubId: Id<"clubs">,
+  reason: string,
+  forceRefresh?: boolean,
+): Promise<MercadoPagoAccessTokenForOperation> {
+  return await ctx.runAction(
+    internal.mercadoPagoOAuth.getValidMercadoPagoAccessTokenForClub,
+    {
+      clubId,
+      reason,
+      forceRefresh,
+    },
+  );
+}
 
-  if (!accessToken) {
-    throw new ConvexError({
-      code: "MERCADOPAGO_NOT_CONNECTED",
-      message: "Este club no tiene Mercado Pago conectado.",
-    });
+async function runMercadoPagoOperationWithValidToken<T>(
+  ctx: ActionCtx,
+  args: {
+    clubId: Id<"clubs">;
+    reason: string;
+    operation: (accessToken: string) => Promise<T>;
+  },
+) {
+  const token = await getValidMercadoPagoTokenForOperation(
+    ctx,
+    args.clubId,
+    args.reason,
+  );
+
+  try {
+    return await args.operation(token.accessToken);
+  } catch (error) {
+    if (
+      !isMercadoPagoUnauthorizedError(error) ||
+      !shouldRetryMercadoPagoUnauthorizedOperation(token.connectionSource)
+    ) {
+      throw error;
+    }
+
+    const refreshedToken = await getValidMercadoPagoTokenForOperation(
+      ctx,
+      args.clubId,
+      `${args.reason}:retry_401`,
+      true,
+    );
+
+    try {
+      return await args.operation(refreshedToken.accessToken);
+    } catch (retryError) {
+      await markMercadoPagoTokenUseFailure(ctx, args.clubId, retryError);
+      throw retryError;
+    }
+  }
+}
+
+async function markMercadoPagoTokenUseFailure(
+  ctx: ActionCtx,
+  clubId: Id<"clubs">,
+  error: unknown,
+) {
+  await ctx.runMutation(
+    internal.mercadoPagoOAuth.markMercadoPagoConnectionTokenUseFailed,
+    {
+      clubId,
+      status: isMercadoPagoUnauthorizedError(error) ? "expired" : "error",
+      errorMessage: safeMercadoPagoErrorMessage(error),
+    },
+  );
+}
+
+function safeMercadoPagoErrorMessage(error: unknown) {
+  if (error instanceof MercadoPagoApiError) {
+    return error.safeMessage;
   }
 
-  return { connection, accessToken };
+  if (isMercadoPagoReconnectError(error)) {
+    return MERCADO_PAGO_RECONNECT_MESSAGE;
+  }
+
+  return "Mercado Pago no pudo procesar la solicitud.";
+}
+
+function publicMercadoPagoErrorMessage(error: unknown) {
+  if (isMercadoPagoReconnectError(error) || isMercadoPagoUnauthorizedError(error)) {
+    return MERCADO_PAGO_RECONNECT_MESSAGE;
+  }
+
+  return "La reserva quedo creada, pero no pudimos abrir Mercado Pago.";
+}
+
+function isMercadoPagoReconnectError(error: unknown) {
+  if (error instanceof ConvexError && typeof error.data === "object") {
+    const data = error.data as { code?: unknown };
+
+    if (data.code === "MERCADOPAGO_RECONNECT_REQUIRED") return true;
+  }
+
+  if (error instanceof Error) {
+    return (
+      error.message.includes("MERCADOPAGO_RECONNECT_REQUIRED") ||
+      error.message.includes(MERCADO_PAGO_RECONNECT_MESSAGE)
+    );
+  }
+
+  return false;
 }
 
 async function getActiveMembershipForCustomer(
@@ -390,8 +515,7 @@ export const getOnlineDepositPreview = query({
       baseReservationTotal,
     });
     const settings = normalizeDepositSettings(club);
-    const mercadoPagoConnected =
-      connection?.status === "connected" && Boolean(connection.accessToken?.trim());
+    const mercadoPagoConnected = hasUsableMercadoPagoConnection(connection);
     const onlineDepositsEnabled = settings.onlineDepositsEnabled && mercadoPagoConnected;
 
     return {
@@ -418,10 +542,11 @@ export const getClubMercadoPagoStatus = query({
   handler: async (ctx) => {
     const { club, clubUser } = await getCurrentUserClub(ctx);
     await requireClubAccess(ctx, club._id, ["club_master", "club_staff"]);
-    const connection = await getActiveMercadoPagoConnection(ctx, club._id);
+    const connection = await getMercadoPagoConnection(ctx, club._id);
     const settings = normalizeDepositSettings(club);
-    const mercadoPagoConnected =
-      connection?.status === "connected" && Boolean(connection.accessToken?.trim());
+    const mercadoPagoConnected = hasUsableMercadoPagoConnection(connection);
+    const safeConnectionStatus =
+      buildMercadoPagoSafeConnectionStatusFields(connection);
 
     return {
       clubId: club._id,
@@ -430,6 +555,7 @@ export const getClubMercadoPagoStatus = query({
       mercadoPagoConnected,
       mercadoPagoConnectionStatus:
         connection?.status ?? club.mercadoPagoConnectionStatus ?? "disconnected",
+      ...safeConnectionStatus,
       canManageConnection: clubUser.role === "club_master",
     };
   },
@@ -453,7 +579,7 @@ export const updateClubDepositSettings = mutation({
     await requireClubAccess(ctx, club._id, ["club_master"]);
     const connection = await getActiveMercadoPagoConnection(ctx, club._id);
 
-    if (args.onlineDepositsEnabled && connection?.status !== "connected") {
+    if (args.onlineDepositsEnabled && !hasUsableMercadoPagoConnection(connection)) {
       throw new ConvexError({
         code: "MERCADOPAGO_NOT_CONNECTED",
         message: "Conecta Mercado Pago antes de activar anticipos online.",
@@ -588,21 +714,26 @@ export const createOnlineDepositBooking = action({
     );
 
     try {
-      const preference = await createMercadoPagoDepositPreference({
-        sellerAccessToken: preparation.accessToken,
+      const preference = await runMercadoPagoOperationWithValidToken(ctx, {
         clubId: preparation.clubId,
-        clubSlug: preparation.clubSlug,
-        clubName: preparation.clubName,
-        courtId: preparation.courtId,
-        courtName: preparation.courtName,
-        reservationId: preparation.bookingId,
-        reservationCode: preparation.code,
-        reservationPaymentId: preparation.paymentId,
-        userId: preparation.userId,
-        customerName: preparation.customerName,
-        customerPhone: preparation.customerPhone,
-        customerEmail: preparation.customerEmail,
-        amount: preparation.amount,
+        reason: "create_deposit_preference",
+        operation: async (accessToken) =>
+          await createMercadoPagoDepositPreference({
+            sellerAccessToken: accessToken,
+            clubId: preparation.clubId,
+            clubSlug: preparation.clubSlug,
+            clubName: preparation.clubName,
+            courtId: preparation.courtId,
+            courtName: preparation.courtName,
+            reservationId: preparation.bookingId,
+            reservationCode: preparation.code,
+            reservationPaymentId: preparation.paymentId,
+            userId: preparation.userId,
+            customerName: preparation.customerName,
+            customerPhone: preparation.customerPhone,
+            customerEmail: preparation.customerEmail,
+            amount: preparation.amount,
+          }),
       });
       const checkoutUrl = getMercadoPagoCheckoutUrl(preference);
 
@@ -628,17 +759,14 @@ export const createOnlineDepositBooking = action({
       await ctx.runMutation(internal.payments._markDepositPreferenceFailed, {
         bookingId: preparation.bookingId,
         paymentId: preparation.paymentId,
-        message:
-          error instanceof Error
-            ? error.message
-            : "No pudimos crear el anticipo online.",
+        message: safeMercadoPagoErrorMessage(error),
       });
 
       return {
         code: preparation.code,
         bookingId: preparation.bookingId,
         paymentId: preparation.paymentId,
-        error: "La reserva quedo creada, pero no pudimos abrir Mercado Pago.",
+        error: publicMercadoPagoErrorMessage(error),
       };
     }
   },
@@ -663,7 +791,6 @@ export const _createOnlineDepositReservation = internalMutation({
     customerPhone: v.string(),
     customerEmail: v.optional(v.string()),
     amount: v.number(),
-    accessToken: v.string(),
   }),
   handler: async (ctx, args) => {
     const club = await getClubOrThrow(ctx, args.clubSlug, {
@@ -672,7 +799,14 @@ export const _createOnlineDepositReservation = internalMutation({
     });
     const court = await getCourtOrThrow(ctx, args.courtId);
     await assertCanBook({ ctx, club, court, ...args });
-    const { accessToken } = await getClubAccessToken(ctx, club._id);
+    const connection = await getActiveMercadoPagoConnection(ctx, club._id);
+
+    if (!hasUsableMercadoPagoConnection(connection)) {
+      throw new ConvexError({
+        code: "MERCADOPAGO_NOT_CONNECTED",
+        message: "Este club no tiene Mercado Pago conectado.",
+      });
+    }
 
     if (!(club.onlineDepositsEnabled ?? false)) {
       throw new ConvexError({
@@ -786,7 +920,6 @@ export const _createOnlineDepositReservation = internalMutation({
       customerPhone: args.customerPhone.trim(),
       customerEmail: customerEmail?.trim() || undefined,
       amount: estimate.depositSuggestedAmount,
-      accessToken,
     };
   },
 });
@@ -884,19 +1017,13 @@ export const processMercadoPagoWebhook = action({
       return { processed: false };
     }
 
-    const connection = await ctx.runQuery(
-      internal.payments._getConnectionForWebhook,
-      { clubId: query.clubId as Id<"clubs"> },
-    );
-
-    if (!connection) {
-      throw new Error("Mercado Pago no esta conectado para este club.");
-    }
-
-    const mercadoPagoPayment = await getMercadoPagoPayment(
-      connection.accessToken,
-      providerPaymentId,
-    );
+    const clubId = query.clubId as Id<"clubs">;
+    const mercadoPagoPayment = await runMercadoPagoOperationWithValidToken(ctx, {
+      clubId,
+      reason: "webhook_payment_fetch",
+      operation: async (accessToken) =>
+        await getMercadoPagoPayment(accessToken, providerPaymentId),
+    });
     const financialSnapshot = extractMercadoPagoFinancialSnapshot(
       mercadoPagoPayment,
       mercadoPagoPayment.transaction_amount,
@@ -904,7 +1031,7 @@ export const processMercadoPagoWebhook = action({
 
     await ctx.runMutation(internal.payments._applyMercadoPagoDepositWebhook, {
       eventId,
-      clubId: connection.clubId,
+      clubId,
       mercadoPagoPaymentId: providerPaymentId,
       mercadoPagoPreferenceId: mercadoPagoPayment.preference_id,
       externalReference: mercadoPagoPayment.external_reference,
@@ -920,27 +1047,6 @@ export const processMercadoPagoWebhook = action({
     });
 
     return { processed: true };
-  },
-});
-
-export const _getConnectionForWebhook = internalQuery({
-  args: { clubId: v.id("clubs") },
-  returns: v.union(
-    v.null(),
-    v.object({
-      clubId: v.id("clubs"),
-      accessToken: v.string(),
-    }),
-  ),
-  handler: async (ctx, args) => {
-    const connection = await getActiveMercadoPagoConnection(ctx, args.clubId);
-
-    if (!connection?.accessToken) return null;
-
-    return {
-      clubId: connection.clubId,
-      accessToken: connection.accessToken,
-    };
   },
 });
 
