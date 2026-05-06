@@ -1,8 +1,11 @@
 export function formatCOP(value: number) {
+  const hasDecimals = !Number.isInteger(value);
+
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
   })
     .format(value)
     .replace(/\s/g, "");

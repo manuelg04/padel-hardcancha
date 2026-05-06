@@ -54,7 +54,10 @@ export const paymentProviderEnvironmentValidator = v.union(
   v.literal("production"),
 );
 
-export const reservationPaymentTypeValidator = v.union(v.literal("deposit"));
+export const reservationPaymentTypeValidator = v.union(
+  v.literal("deposit"),
+  v.literal("full_payment"),
+);
 
 export const reservationPaymentStatusValidator = v.union(
   v.literal("created"),
@@ -92,6 +95,12 @@ export const providerPaymentStatusValidator = v.union(
   v.literal("refunded"),
   v.literal("charged_back"),
   v.literal("error"),
+);
+
+export const financialSnapshotStatusValidator = v.union(
+  v.literal("complete"),
+  v.literal("partial"),
+  v.literal("unavailable"),
 );
 
 export const sourceValidator = v.union(
@@ -565,6 +574,20 @@ export const reservationPaymentValidator = v.object({
   type: reservationPaymentTypeValidator,
   status: reservationPaymentStatusValidator,
   amount: v.number(),
+  grossAmount: v.optional(v.number()),
+  gatewayFeeAmount: v.optional(v.number()),
+  taxWithholdingAmount: v.optional(v.number()),
+  totalDeductionsAmount: v.optional(v.number()),
+  netReceivedAmount: v.optional(v.number()),
+  paymentMethod: v.optional(v.string()),
+  paymentMethodId: v.optional(v.string()),
+  installments: v.optional(v.number()),
+  providerMerchantOrderId: v.optional(v.string()),
+  dateApproved: v.optional(v.string()),
+  moneyReleaseDate: v.optional(v.string()),
+  financialSnapshotStatus: v.optional(financialSnapshotStatusValidator),
+  financialSnapshotCapturedAt: v.optional(v.number()),
+  financialSnapshotWarning: v.optional(v.string()),
   currency: v.string(),
   mercadoPagoPreferenceId: v.optional(v.string()),
   mercadoPagoPaymentId: v.optional(v.string()),

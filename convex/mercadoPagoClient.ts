@@ -16,11 +16,31 @@ export type MercadoPagoPaymentResponse = {
   payment_method_id?: string;
   payment_type_id?: string;
   collector_id?: number | string;
+  merchant_order_id?: number | string;
   order?: { id?: number | string };
   preference_id?: string;
   transaction_amount?: number;
+  transaction_details?: {
+    net_received_amount?: number;
+    money_release_date?: string;
+  };
+  fee_details?: Array<{
+    type?: string;
+    amount?: number;
+  }>;
+  charges_details?: Array<{
+    type?: string;
+    name?: string;
+    amount?: number;
+    amounts?: {
+      original?: number;
+    };
+    metadata?: Record<string, unknown>;
+  }>;
   currency_id?: string;
   date_approved?: string;
+  money_release_date?: string;
+  installments?: number;
 };
 
 function getAppBaseUrl() {

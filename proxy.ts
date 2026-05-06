@@ -8,6 +8,7 @@ const isAdminRoute = createRouteMatcher([
   "/admin/agenda(.*)",
   "/admin/config(.*)",
   "/admin/metricas(.*)",
+  "/admin/pagos(.*)",
 ]);
 const isSuperAdminRoute = createRouteMatcher([
   "/super-admin",

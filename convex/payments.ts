@@ -8,7 +8,15 @@ import {
   estimateMembershipForDeposit,
   normalizeDepositSettings,
 } from "../lib/depositRules";
+import { extractMercadoPagoFinancialSnapshot } from "../lib/mercadoPagoFinancialRules";
 import { normalizeMercadoPagoConnectionInput } from "../lib/mercadoPagoConnectionRules";
+import {
+  calculatePaymentTransactionsKpis,
+  calculatePendingAmountAtReception,
+  getGrossAmountForCalculations,
+  sumApprovedGrossByReservation,
+  type PaymentTransactionSummaryInput,
+} from "../lib/paymentTransactionRules";
 import {
   createMercadoPagoDepositPreference,
   getMercadoPagoCheckoutUrl,
@@ -34,6 +42,10 @@ import {
 import { requireAuthUser, requireClubAccess, getCurrentUserClub } from "./access";
 import {
   depositTypeValidator,
+  financialSnapshotStatusValidator,
+  reservationPaymentProviderValidator,
+  reservationPaymentStatusValidator,
+  reservationPaymentTypeValidator,
   reservationPaymentValidator,
 } from "./validators";
 
@@ -112,6 +124,54 @@ const connectionStatusValidator = v.object({
   mercadoPagoConnected: v.boolean(),
   mercadoPagoConnectionStatus: v.string(),
   canManageConnection: v.boolean(),
+});
+
+const nullableNumberValidator = v.union(v.number(), v.null());
+const nullableStringValidator = v.union(v.string(), v.null());
+
+const paymentTransactionRowValidator = v.object({
+  id: v.id("reservationPayments"),
+  clubId: v.id("clubs"),
+  reservationId: v.id("bookings"),
+  bookingCode: nullableStringValidator,
+  customerName: nullableStringValidator,
+  customerPhone: nullableStringValidator,
+  courtName: nullableStringValidator,
+  reservationDate: nullableStringValidator,
+  reservationStartTime: nullableStringValidator,
+  reservationEndTime: nullableStringValidator,
+  type: reservationPaymentTypeValidator,
+  status: reservationPaymentStatusValidator,
+  provider: reservationPaymentProviderValidator,
+  providerPaymentId: nullableStringValidator,
+  providerMerchantOrderId: nullableStringValidator,
+  grossAmount: nullableNumberValidator,
+  gatewayFeeAmount: nullableNumberValidator,
+  taxWithholdingAmount: nullableNumberValidator,
+  totalDeductionsAmount: nullableNumberValidator,
+  netReceivedAmount: nullableNumberValidator,
+  pendingAmountAtReception: v.number(),
+  totalReservationAmount: v.number(),
+  paymentMethod: nullableStringValidator,
+  paymentMethodId: nullableStringValidator,
+  installments: nullableNumberValidator,
+  dateApproved: nullableStringValidator,
+  moneyReleaseDate: nullableStringValidator,
+  financialSnapshotStatus: v.union(financialSnapshotStatusValidator, v.null()),
+  financialSnapshotWarning: nullableStringValidator,
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+const paymentTransactionKpisValidator = v.object({
+  grossCollectedAmount: v.number(),
+  gatewayDeductionsAmount: v.number(),
+  netReceivedAmount: v.number(),
+  pendingReceptionAmount: v.number(),
+  transactionCount: v.number(),
+  depositCount: v.number(),
+  fullPaymentCount: v.number(),
+  missingFinancialBreakdownCount: v.number(),
 });
 
 async function getActiveMercadoPagoConnection(ctx: Ctx, clubId: Id<"clubs">) {
@@ -832,6 +892,10 @@ export const processMercadoPagoWebhook = action({
       connection.accessToken,
       providerPaymentId,
     );
+    const financialSnapshot = extractMercadoPagoFinancialSnapshot(
+      mercadoPagoPayment,
+      mercadoPagoPayment.transaction_amount,
+    );
 
     await ctx.runMutation(internal.payments._applyMercadoPagoDepositWebhook, {
       eventId,
@@ -846,6 +910,7 @@ export const processMercadoPagoWebhook = action({
       paidAt: mercadoPagoPayment.date_approved
         ? Date.parse(mercadoPagoPayment.date_approved)
         : undefined,
+      ...financialSnapshot,
       rawProviderResponse: mercadoPagoPayment,
     });
 
@@ -906,6 +971,7 @@ export const _recordWebhookEventStart = internalMutation({
       provider: "mercadopago",
       eventId: args.eventId,
       clubId: args.clubId,
+      providerPaymentId: args.mercadoPagoPaymentId,
       mercadoPagoPaymentId: args.mercadoPagoPaymentId,
       eventType: args.eventType,
       action: args.action,
@@ -949,25 +1015,79 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
     status: v.string(),
     statusDetail: v.optional(v.string()),
     amount: v.optional(v.number()),
+    grossAmount: v.optional(v.number()),
+    gatewayFeeAmount: v.optional(v.number()),
+    taxWithholdingAmount: v.optional(v.number()),
+    totalDeductionsAmount: v.optional(v.number()),
+    netReceivedAmount: v.optional(v.number()),
+    paymentMethod: v.optional(v.string()),
+    paymentMethodId: v.optional(v.string()),
+    installments: v.optional(v.number()),
+    providerMerchantOrderId: v.optional(v.string()),
+    dateApproved: v.optional(v.string()),
+    moneyReleaseDate: v.optional(v.string()),
+    financialSnapshotStatus: financialSnapshotStatusValidator,
+    financialSnapshotWarning: v.optional(v.string()),
     currency: v.optional(v.string()),
     paidAt: v.optional(v.number()),
     rawProviderResponse: v.any(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    if (!args.externalReference?.startsWith("deposit:")) {
-      throw new Error("Mercado Pago envio una referencia invalida.");
-    }
-
-    const payment = await ctx.db
+    const paymentsWithProviderPaymentId = await ctx.db
       .query("reservationPayments")
-      .withIndex("by_external_reference", (q) =>
-        q.eq("externalReference", args.externalReference!),
+      .withIndex("by_provider_payment", (q) =>
+        q.eq("provider", "mercadopago").eq("mercadoPagoPaymentId", args.mercadoPagoPaymentId),
       )
-      .unique();
+      .collect();
+    const paymentByExternalReference = args.externalReference
+      ? await ctx.db
+          .query("reservationPayments")
+          .withIndex("by_external_reference", (q) =>
+            q.eq("externalReference", args.externalReference!),
+          )
+          .unique()
+      : null;
+    const payment =
+      paymentByExternalReference ??
+      (paymentsWithProviderPaymentId.length === 1
+        ? paymentsWithProviderPaymentId[0]
+        : null);
 
     if (!payment || payment.clubId !== args.clubId) {
       throw new Error("No encontramos el intento de anticipo.");
+    }
+
+    if (payment.type !== "deposit" || !payment.externalReference.startsWith("deposit:")) {
+      throw new Error("Mercado Pago envio una referencia invalida.");
+    }
+
+    const conflictingPayment = paymentsWithProviderPaymentId.find(
+      (candidate) =>
+        candidate._id !== payment._id && candidate.status !== "superseded",
+    );
+    const now = Date.now();
+
+    if (conflictingPayment) {
+      const event = await ctx.db
+        .query("paymentWebhookEvents")
+        .withIndex("by_provider_event", (q) =>
+          q.eq("provider", "mercadopago").eq("eventId", args.eventId),
+        )
+        .unique();
+
+      if (event) {
+        await ctx.db.patch(event._id, {
+          reservationPaymentId: payment._id,
+          providerPaymentId: args.mercadoPagoPaymentId,
+          processingWarning:
+            "Mercado Pago payment ID is already linked to another reservation payment",
+          processedAt: now,
+          updatedAt: now,
+        });
+      }
+
+      return null;
     }
 
     const booking = await ctx.db.get(payment.reservationId);
@@ -975,14 +1095,38 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
       throw new Error("No encontramos la reserva del anticipo.");
     }
 
+    const grossAmountForDeposit =
+      args.grossAmount ?? payment.grossAmount ?? args.amount ?? payment.amount;
     const webhookState = applyDepositWebhookState({
       currentDepositStatus: booking.depositStatus ?? "none",
       currentDepositPaidAmount: booking.depositPaidAmount ?? 0,
       estimatedTotal: booking.estimatedTotal ?? booking.value,
-      paymentAmount: args.amount ?? payment.amount,
+      paymentAmount: grossAmountForDeposit,
       providerStatus: args.status,
     });
-    const now = Date.now();
+    const shouldApplyIncomingFinancialSnapshot =
+      payment.financialSnapshotStatus !== "complete" ||
+      args.financialSnapshotStatus === "complete";
+    const financialPatch = shouldApplyIncomingFinancialSnapshot
+      ? {
+          grossAmount: grossAmountForDeposit,
+          gatewayFeeAmount: args.gatewayFeeAmount,
+          taxWithholdingAmount: args.taxWithholdingAmount,
+          totalDeductionsAmount: args.totalDeductionsAmount,
+          netReceivedAmount: args.netReceivedAmount,
+          paymentMethod: args.paymentMethod,
+          paymentMethodId: args.paymentMethodId,
+          installments: args.installments,
+          providerMerchantOrderId: args.providerMerchantOrderId,
+          dateApproved: args.dateApproved,
+          moneyReleaseDate: args.moneyReleaseDate,
+          financialSnapshotStatus: args.financialSnapshotStatus,
+          financialSnapshotCapturedAt: now,
+          financialSnapshotWarning: args.financialSnapshotWarning,
+        }
+      : {
+          financialSnapshotCapturedAt: now,
+        };
 
     await ctx.db.patch(payment._id, {
       status: webhookState.paymentStatus,
@@ -993,9 +1137,11 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
       mercadoPagoStatusDetail: args.statusDetail,
       amount: args.amount ?? payment.amount,
       currency: args.currency ?? payment.currency,
-      paidAt: webhookState.paymentStatus === "approved" ? args.paidAt ?? now : payment.paidAt,
+      paidAt:
+        webhookState.paymentStatus === "approved" ? args.paidAt ?? now : payment.paidAt,
       rawProviderResponse: args.rawProviderResponse,
       updatedAt: now,
+      ...financialPatch,
     });
 
     await ctx.db.patch(booking._id, {
@@ -1014,6 +1160,7 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
     if (event) {
       await ctx.db.patch(event._id, {
         reservationPaymentId: payment._id,
+        providerPaymentId: args.mercadoPagoPaymentId,
         processedAt: now,
         updatedAt: now,
       });
@@ -1069,3 +1216,224 @@ export const listReservationPaymentsByBooking = query({
       .collect();
   },
 });
+
+export const listClubPaymentTransactions = query({
+  args: {
+    fromDate: v.optional(v.string()),
+    toDate: v.optional(v.string()),
+    status: v.optional(reservationPaymentStatusValidator),
+    type: v.optional(reservationPaymentTypeValidator),
+    provider: v.optional(reservationPaymentProviderValidator),
+    search: v.optional(v.string()),
+  },
+  returns: v.object({
+    rows: v.array(paymentTransactionRowValidator),
+    kpis: paymentTransactionKpisValidator,
+  }),
+  handler: async (ctx, args) => {
+    const { club } = await getCurrentUserClub(ctx);
+    await requireClubAccess(ctx, club._id, ["club_master", "club_staff"]);
+    const payments = await ctx.db
+      .query("reservationPayments")
+      .withIndex("by_club", (q) => q.eq("clubId", club._id))
+      .order("desc")
+      .collect();
+    const contexts = await Promise.all(
+      payments.map((payment) => buildPaymentTransactionContext(ctx, payment)),
+    );
+    const approvedGrossByReservation = sumApprovedGrossByReservation(
+      contexts.map((context) => context.summary),
+    );
+    const filteredContexts = contexts.filter((context) =>
+      matchesPaymentTransactionFilters(context, args),
+    );
+    const rows = filteredContexts.map((context) =>
+      buildPaymentTransactionRow(context, approvedGrossByReservation),
+    );
+    const kpis = calculatePaymentTransactionsKpis(
+      filteredContexts.map((context) => context.summary),
+      approvedGrossByReservation,
+    );
+
+    return { rows, kpis };
+  },
+});
+
+export const getPaymentTransactionDetail = query({
+  args: {
+    paymentId: v.id("reservationPayments"),
+  },
+  returns: v.union(paymentTransactionRowValidator, v.null()),
+  handler: async (ctx, args) => {
+    const { club } = await getCurrentUserClub(ctx);
+    const payment = await ctx.db.get(args.paymentId);
+
+    if (!payment) return null;
+
+    if (payment.clubId !== club._id) {
+      throw new ConvexError("No tienes acceso a este pago.");
+    }
+
+    await requireClubAccess(ctx, club._id, ["club_master", "club_staff"]);
+    const reservationPayments = await ctx.db
+      .query("reservationPayments")
+      .withIndex("by_reservation", (q) => q.eq("reservationId", payment.reservationId))
+      .collect();
+    const contexts = await Promise.all(
+      reservationPayments.map((reservationPayment) =>
+        buildPaymentTransactionContext(ctx, reservationPayment),
+      ),
+    );
+    const approvedGrossByReservation = sumApprovedGrossByReservation(
+      contexts.map((context) => context.summary),
+    );
+    const context =
+      contexts.find((candidate) => candidate.payment._id === payment._id) ??
+      (await buildPaymentTransactionContext(ctx, payment));
+
+    return buildPaymentTransactionRow(context, approvedGrossByReservation);
+  },
+});
+
+type PaymentTransactionContext = {
+  payment: Doc<"reservationPayments">;
+  booking: Doc<"bookings"> | null;
+  customer: Doc<"customers"> | null;
+  court: Doc<"courts"> | null;
+  summary: PaymentTransactionSummaryInput;
+};
+
+async function buildPaymentTransactionContext(
+  ctx: QueryCtx,
+  payment: Doc<"reservationPayments">,
+): Promise<PaymentTransactionContext> {
+  const booking = await ctx.db.get(payment.reservationId);
+  const [customer, court] = await Promise.all([
+    booking?.customerId ? ctx.db.get(booking.customerId) : Promise.resolve(null),
+    booking ? ctx.db.get(booking.courtId) : Promise.resolve(null),
+  ]);
+  const totalReservationAmount = booking?.estimatedTotal ?? booking?.value ?? 0;
+
+  return {
+    payment,
+    booking,
+    customer,
+    court,
+    summary: {
+      reservationId: payment.reservationId,
+      status: payment.status,
+      type: payment.type,
+      amount: payment.amount,
+      grossAmount: payment.grossAmount,
+      totalDeductionsAmount: payment.totalDeductionsAmount,
+      gatewayFeeAmount: payment.gatewayFeeAmount,
+      taxWithholdingAmount: payment.taxWithholdingAmount,
+      netReceivedAmount: payment.netReceivedAmount,
+      financialSnapshotStatus: payment.financialSnapshotStatus,
+      totalReservationAmount,
+    },
+  };
+}
+
+function matchesPaymentTransactionFilters(
+  context: PaymentTransactionContext,
+  filters: {
+    fromDate?: string;
+    toDate?: string;
+    status?: Doc<"reservationPayments">["status"];
+    type?: Doc<"reservationPayments">["type"];
+    provider?: Doc<"reservationPayments">["provider"];
+    search?: string;
+  },
+) {
+  const payment = context.payment;
+  const booking = context.booking;
+
+  if (filters.status && payment.status !== filters.status) return false;
+  if (filters.type && payment.type !== filters.type) return false;
+  if (filters.provider && payment.provider !== filters.provider) return false;
+  if (filters.fromDate && (!booking || booking.localDate < filters.fromDate)) {
+    return false;
+  }
+  if (filters.toDate && (!booking || booking.localDate > filters.toDate)) {
+    return false;
+  }
+
+  const search = filters.search?.trim().toLowerCase();
+  if (!search) return true;
+
+  return [
+    context.customer?.fullName,
+    context.customer?.phone,
+    context.customer?.email,
+    booking?.customerName,
+    booking?.customerPhone,
+    booking?.customerEmail,
+    booking?.code,
+    payment.mercadoPagoPaymentId,
+    payment.providerMerchantOrderId,
+    payment.externalReference,
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(search));
+}
+
+function buildPaymentTransactionRow(
+  context: PaymentTransactionContext,
+  approvedGrossByReservation: Map<string, number>,
+) {
+  const payment = context.payment;
+  const booking = context.booking;
+  const totalReservationAmount = context.summary.totalReservationAmount;
+  const totalPaidOnlineGross =
+    approvedGrossByReservation.get(payment.reservationId) ?? 0;
+
+  return {
+    id: payment._id,
+    clubId: payment.clubId,
+    reservationId: payment.reservationId,
+    bookingCode: booking?.code ?? null,
+    customerName:
+      context.customer?.fullName ?? booking?.customerName ?? null,
+    customerPhone:
+      context.customer?.phone ?? booking?.customerPhone ?? null,
+    courtName: context.court?.name ?? null,
+    reservationDate: booking?.localDate ?? null,
+    reservationStartTime:
+      booking?.startMinutes === undefined
+        ? null
+        : minutesToClockTime(booking.startMinutes),
+    reservationEndTime:
+      booking?.endMinutes === undefined ? null : minutesToClockTime(booking.endMinutes),
+    type: payment.type,
+    status: payment.status,
+    provider: payment.provider,
+    providerPaymentId: payment.mercadoPagoPaymentId ?? null,
+    providerMerchantOrderId: payment.providerMerchantOrderId ?? null,
+    grossAmount: getGrossAmountForCalculations(payment),
+    gatewayFeeAmount: payment.gatewayFeeAmount ?? null,
+    taxWithholdingAmount: payment.taxWithholdingAmount ?? null,
+    totalDeductionsAmount: payment.totalDeductionsAmount ?? null,
+    netReceivedAmount: payment.netReceivedAmount ?? null,
+    pendingAmountAtReception: calculatePendingAmountAtReception(
+      totalReservationAmount,
+      totalPaidOnlineGross,
+    ),
+    totalReservationAmount,
+    paymentMethod: payment.paymentMethod ?? null,
+    paymentMethodId: payment.paymentMethodId ?? null,
+    installments: payment.installments ?? null,
+    dateApproved: payment.dateApproved ?? null,
+    moneyReleaseDate: payment.moneyReleaseDate ?? null,
+    financialSnapshotStatus: payment.financialSnapshotStatus ?? null,
+    financialSnapshotWarning: payment.financialSnapshotWarning ?? null,
+    createdAt: payment.createdAt,
+    updatedAt: payment.updatedAt,
+  };
+}
+
+function minutesToClockTime(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}

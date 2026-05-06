@@ -61,19 +61,28 @@ function verifyMercadoPagoWebhookSignature({
   signature: string | null;
 }) {
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET?.trim();
+  const isProduction = process.env.NODE_ENV === "production";
 
-  if (!secret) return true;
+  if (!secret) {
+    return isProduction
+      ? { ok: false as const, status: 500 }
+      : { ok: true as const };
+  }
 
   const parsed = parseMercadoPagoSignature(signature);
-  if (!dataId || !requestId || !parsed) return false;
+  if (!dataId || !requestId || !parsed) {
+    return { ok: false as const, status: 401 };
+  }
 
   const manifest = `id:${dataId};request-id:${requestId};ts:${parsed.ts};`;
   const expected = createHmac("sha256", secret).update(manifest).digest("hex");
 
   try {
-    return safeEqualHex(expected, parsed.v1);
+    return safeEqualHex(expected, parsed.v1)
+      ? { ok: true as const }
+      : { ok: false as const, status: 401 };
   } catch {
-    return false;
+    return { ok: false as const, status: 401 };
   }
 }
 
@@ -86,8 +95,8 @@ async function handleWebhook(request: NextRequest, payload: unknown) {
     signature: request.headers.get("x-signature"),
   });
 
-  if (!validSignature) {
-    return NextResponse.json({ ok: false }, { status: 401 });
+  if (!validSignature.ok) {
+    return NextResponse.json({ ok: false }, { status: validSignature.status });
   }
 
   try {
@@ -109,7 +118,7 @@ export async function POST(request: NextRequest) {
     const body = await request.text();
     payload = body ? JSON.parse(body) : {};
   } catch {
-    payload = {};
+    return NextResponse.json({ ok: false }, { status: 400 });
   }
 
   return await handleWebhook(request, payload);

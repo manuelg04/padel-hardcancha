@@ -3,6 +3,7 @@
 import {
   BarChart3,
   CalendarDays,
+  CreditCard,
   GraduationCap,
   LogOut,
   Settings,
@@ -20,6 +21,7 @@ import { api } from "@/convex/_generated/api";
 const navItems = [
   { href: "/admin/agenda", label: "Agenda", icon: CalendarDays, active: true },
   { href: "#reservas", label: "Reservas", icon: ClipboardList, active: false },
+  { href: "/admin/pagos", label: "Pagos", icon: CreditCard, active: true },
   { href: "/admin/academia", label: "Academia", icon: GraduationCap, active: true },
   { href: "/admin/metricas", label: "Métricas", icon: BarChart3, active: true },
   { href: "/admin/membresias", label: "Membresias", icon: Users, active: true },
