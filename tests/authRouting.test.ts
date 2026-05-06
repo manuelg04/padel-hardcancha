@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { choosePostLoginPath } from "../lib/authRouting";
+import { choosePostLoginPath, shouldHandleConvexAuthCode } from "../lib/authRouting";
 
 describe("auth routing", () => {
   test("sends a super admin to the super admin clubs page", () => {
@@ -34,5 +34,13 @@ describe("auth routing", () => {
         clubAccess: [],
       }),
     ).toBe("/clubes");
+  });
+
+  test("does not let Convex Auth consume the Mercado Pago OAuth callback code", () => {
+    expect(shouldHandleConvexAuthCode("/api/mercadopago/oauth/callback")).toBe(
+      false,
+    );
+    expect(shouldHandleConvexAuthCode("/api/auth/callback")).toBe(true);
+    expect(shouldHandleConvexAuthCode("/login")).toBe(true);
   });
 });

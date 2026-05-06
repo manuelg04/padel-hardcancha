@@ -4,6 +4,8 @@ import {
   nextjsMiddlewareRedirect,
 } from "@convex-dev/auth/nextjs/server";
 
+import { shouldHandleConvexAuthCode } from "./lib/authRouting";
+
 const isAdminRoute = createRouteMatcher([
   "/admin/agenda(.*)",
   "/admin/config(.*)",
@@ -26,20 +28,26 @@ function loginRoute(pathname: string) {
   return "/login";
 }
 
-const authProxy = convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
-  const isProtected =
-    isAdminRoute(request) || isSuperAdminRoute(request) || isPlayerRoute(request);
+const authProxy = convexAuthNextjsMiddleware(
+  async (request, { convexAuth }) => {
+    const isProtected =
+      isAdminRoute(request) || isSuperAdminRoute(request) || isPlayerRoute(request);
 
-  if (!isProtected || (await convexAuth.isAuthenticated())) {
-    return;
-  }
+    if (!isProtected || (await convexAuth.isAuthenticated())) {
+      return;
+    }
 
-  const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-  return nextjsMiddlewareRedirect(
-    request,
-    `${loginRoute(request.nextUrl.pathname)}?next=${encodeURIComponent(next)}`,
-  );
-});
+    const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+    return nextjsMiddlewareRedirect(
+      request,
+      `${loginRoute(request.nextUrl.pathname)}?next=${encodeURIComponent(next)}`,
+    );
+  },
+  {
+    shouldHandleCode: (request) =>
+      shouldHandleConvexAuthCode(request.nextUrl.pathname),
+  },
+);
 
 export function proxy(request: Parameters<typeof authProxy>[0], event: Parameters<typeof authProxy>[1]) {
   return authProxy(request, event);

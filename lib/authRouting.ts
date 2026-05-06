@@ -20,3 +20,7 @@ export function choosePostLoginPath(access: CurrentUserAccess) {
 
   return "/clubes";
 }
+
+export function shouldHandleConvexAuthCode(pathname: string) {
+  return pathname !== "/api/mercadopago/oauth/callback";
+}
