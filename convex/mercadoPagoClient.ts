@@ -1,5 +1,9 @@
 import type { Id } from "./_generated/dataModel";
 import { sanitizeMercadoPagoOAuthMessage } from "../lib/mercadoPagoOAuthRules";
+import {
+  buildReservationPaymentExternalReference,
+  type OnlineReservationPaymentType,
+} from "../lib/reservationPaymentOptionRules";
 
 const MERCADO_PAGO_API_BASE = "https://api.mercadopago.com";
 
@@ -133,7 +137,34 @@ export async function createMercadoPagoDepositPreference(args: {
   customerEmail?: string;
   amount: number;
 }) {
+  return await createMercadoPagoReservationPreference({
+    ...args,
+    paymentType: "deposit",
+  });
+}
+
+export async function createMercadoPagoReservationPreference(args: {
+  sellerAccessToken: string;
+  clubId: Id<"clubs">;
+  clubSlug: string;
+  clubName: string;
+  courtId: Id<"courts">;
+  courtName: string;
+  reservationId: Id<"bookings">;
+  reservationCode: string;
+  reservationPaymentId: Id<"reservationPayments">;
+  userId: Id<"users">;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  amount: number;
+  paymentType: OnlineReservationPaymentType;
+}) {
   const baseUrl = getAppBaseUrl();
+  const title =
+    args.paymentType === "full_payment"
+      ? "Pago completo reserva cancha"
+      : "Abono reserva cancha";
 
   return await mercadoPagoRequest<MercadoPagoPreferenceResponse>(
     "/checkout/preferences",
@@ -143,7 +174,7 @@ export async function createMercadoPagoDepositPreference(args: {
       body: JSON.stringify({
         items: [
           {
-            title: `Anticipo reserva ${args.reservationCode} - ${args.clubName}`,
+            title,
             quantity: 1,
             unit_price: args.amount,
             currency_id: "COP",
@@ -163,14 +194,18 @@ export async function createMercadoPagoDepositPreference(args: {
         },
         auto_return: "approved",
         notification_url: `${baseUrl}/api/mercadopago/webhook?clubId=${args.clubId}`,
-        external_reference: `deposit:${args.reservationPaymentId}`,
+        external_reference: buildReservationPaymentExternalReference(
+          args.paymentType,
+          args.reservationPaymentId,
+        ),
         metadata: {
           reservationId: args.reservationId,
+          reservationPaymentId: args.reservationPaymentId,
           clubId: args.clubId,
+          courtId: args.courtId,
           userId: args.userId,
-          paymentType: "deposit",
+          paymentType: args.paymentType,
         },
-        marketplace_fee: 0,
       }),
     },
   );

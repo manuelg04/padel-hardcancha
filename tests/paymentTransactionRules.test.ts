@@ -66,6 +66,33 @@ describe("payment transaction calculations", () => {
     });
   });
 
+  test("approved full payments count as collected with no reception balance", () => {
+    expect(
+      calculatePaymentTransactionsKpis([
+        {
+          reservationId: "reservation-1",
+          status: "approved",
+          type: "full_payment",
+          amount: 60000,
+          grossAmount: 60000,
+          totalDeductionsAmount: 5404.4,
+          netReceivedAmount: 54595.6,
+          financialSnapshotStatus: "complete",
+          totalReservationAmount: 60000,
+        },
+      ]),
+    ).toMatchObject({
+      grossCollectedAmount: 60000,
+      gatewayDeductionsAmount: 5404.4,
+      netReceivedAmount: 54595.6,
+      pendingReceptionAmount: 0,
+      approvedPaymentCount: 1,
+      pendingAttemptCount: 0,
+      depositCount: 0,
+      fullPaymentCount: 1,
+    });
+  });
+
   test("pending payments do not add to financial totals or reception balance", () => {
     expect(
       calculatePaymentTransactionsKpis([

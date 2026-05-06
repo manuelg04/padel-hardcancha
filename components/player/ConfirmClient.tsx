@@ -11,7 +11,18 @@ import type { Id } from "@/convex/_generated/dataModel";
 import { formatDateLong, minutesToRange } from "@/lib/dates";
 import { formatCOP, onlyDigits } from "@/lib/format";
 import { getPlayerBookingError } from "@/lib/playerBookingErrors";
+import {
+  calculateReservationPaymentBreakdown,
+  getReservationPaymentSubmitLabel,
+  type PublicReservationPaymentType,
+} from "@/lib/reservationPaymentOptionRules";
 import { PlayerShell } from "./PlayerShell";
+
+type PaymentSelection =
+  | "pay_at_club"
+  | "transfer"
+  | "deposit"
+  | "full_payment";
 
 export function ConfirmClient({
   slug,
@@ -31,12 +42,12 @@ export function ConfirmClient({
   const [name, setName] = useState<string | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"club" | "transfer">("club");
+  const [paymentSelection, setPaymentSelection] =
+    useState<PaymentSelection>("pay_at_club");
   const [error, setError] = useState("");
   const [canReturnToAvailability, setCanReturnToAvailability] = useState(false);
-  const [submittingOption, setSubmittingOption] = useState<
-    "pay_at_club" | "deposit_online" | null
-  >(null);
+  const [submittingOption, setSubmittingOption] =
+    useState<PaymentSelection | null>(null);
   const currentUser = useQuery(
     api.users.getCurrentUser,
     isAuthenticated ? {} : "skip",
@@ -54,6 +65,9 @@ export function ConfirmClient({
   );
   const createBooking = useMutation(api.bookings.createOnlineBooking);
   const createDepositBooking = useAction(api.payments.createOnlineDepositBooking);
+  const createFullPaymentBooking = useAction(
+    api.payments.createOnlineFullPaymentBooking,
+  );
 
   const selectedSlot = useMemo(
     () =>
@@ -92,20 +106,53 @@ export function ConfirmClient({
   const hasDepositWaiver = Boolean(
     depositPreview?.onlineDepositsEnabled && depositPreview.playerHasDepositWaiver,
   );
-  const showDepositChoice = Boolean(
-    depositPreview?.onlineDepositsEnabled &&
-      !depositPreview.playerHasDepositWaiver &&
-      depositPreview.depositSuggestedAmount > 0,
+  const estimatedPaymentTotal =
+    depositPreview?.estimatedTotal ?? selectedSlot?.value ?? 0;
+  const onlinePaymentsAvailable = Boolean(
+    depositPreview?.onlineDepositsEnabled && estimatedPaymentTotal > 0,
   );
-  const depositBalanceDue =
-    depositPreview && depositPreview.depositSuggestedAmount > 0
-      ? Math.max(
-          depositPreview.estimatedTotal - depositPreview.depositSuggestedAmount,
-          0,
-        )
-      : 0;
+  const showDepositChoice = Boolean(
+    onlinePaymentsAvailable &&
+      !(depositPreview?.playerHasDepositWaiver ?? false) &&
+      (depositPreview?.depositSuggestedAmount ?? 0) > 0,
+  );
+  const showFullPaymentChoice = Boolean(
+    onlinePaymentsAvailable && (depositPreview?.fullPaymentAmount ?? 0) > 0,
+  );
+  const paymentOptions = useMemo(
+    () => buildPaymentOptions({
+      total: estimatedPaymentTotal,
+      showDepositChoice,
+      showFullPaymentChoice,
+    }),
+    [estimatedPaymentTotal, showDepositChoice, showFullPaymentChoice],
+  );
+  const effectivePaymentSelection = paymentOptions.some(
+    (option) => option.value === paymentSelection,
+  )
+    ? paymentSelection
+    : "pay_at_club";
+  const selectedPublicPaymentType: PublicReservationPaymentType =
+    effectivePaymentSelection === "deposit" ||
+    effectivePaymentSelection === "full_payment"
+      ? effectivePaymentSelection
+      : "pay_at_club";
+  const primaryButtonLabel =
+    effectivePaymentSelection === "transfer"
+      ? submittingOption === "transfer"
+        ? "Confirmando..."
+        : "Confirmar reserva"
+      : getReservationPaymentSubmitLabel(
+          selectedPublicPaymentType,
+          submittingOption === effectivePaymentSelection,
+        );
+  const primaryButtonIcon =
+    effectivePaymentSelection === "deposit" ||
+    effectivePaymentSelection === "full_payment"
+      ? (<CreditCard size={17} />)
+      : (<Check size={17} />);
 
-  async function submitBooking(option: "pay_at_club" | "deposit_online") {
+  async function submitBooking(option: PaymentSelection) {
     setError("");
     setCanReturnToAvailability(false);
 
@@ -125,8 +172,10 @@ export function ConfirmClient({
 
     try {
       setSubmittingOption(option);
-      if (option === "deposit_online") {
-        const result = await createDepositBooking({
+      if (option === "deposit" || option === "full_payment") {
+        const paymentAction =
+          option === "deposit" ? createDepositBooking : createFullPaymentBooking;
+        const result = await paymentAction({
           clubSlug: slug,
           courtId: courtId as Id<"courts">,
           localDate,
@@ -142,7 +191,9 @@ export function ConfirmClient({
           return;
         }
 
-        router.push(`/club/${slug}/reserva/${result.code}?payment=failure`);
+        setError(
+          "No pudimos iniciar el pago online. Intenta nuevamente o elige pago en club.",
+        );
         return;
       } else {
         const result = await createBooking({
@@ -154,22 +205,26 @@ export function ConfirmClient({
           customerName: effectiveName,
           customerPhone: effectivePhone,
           customerEmail: effectiveEmail || undefined,
-          paymentMethod,
+          paymentMethod: option === "transfer" ? "transfer" : "club",
         });
         router.push(`/club/${slug}/reserva/${result.code}`);
       }
     } catch (bookingError) {
       const bookingFailure = getPlayerBookingError(bookingError);
-      setError(bookingFailure.message);
+      setError(
+        option === "deposit" || option === "full_payment"
+          ? "No pudimos iniciar el pago online. Intenta nuevamente o elige pago en club."
+          : bookingFailure.message,
+      );
       setCanReturnToAvailability(bookingFailure.canReturnToAvailability);
     } finally {
       setSubmittingOption(null);
     }
   }
 
-  function submitPayAtClub(event: React.FormEvent<HTMLFormElement>) {
+  function submitSelectedPayment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitBooking("pay_at_club");
+    void submitBooking(effectivePaymentSelection);
   }
 
   if (isLoading || !isAuthenticated || club === undefined || availability === undefined) {
@@ -265,7 +320,7 @@ export function ConfirmClient({
 
             <form
               className="space-y-4 md:rounded-[var(--r-lg)] md:border md:border-[var(--ink-200)] md:bg-white md:p-5 md:shadow-[var(--shadow-sm)]"
-              onSubmit={submitPayAtClub}
+              onSubmit={submitSelectedPayment}
             >
               <div className="field">
                 <label htmlFor="name">Nombre completo</label>
@@ -298,58 +353,49 @@ export function ConfirmClient({
                 <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-[var(--ink-500)]">
                   Método de pago
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    ["club", "Pago en club"],
-                    ["transfer", "Transferencia"],
-                  ].map(([value, label]) => (
+                <div className="grid gap-2">
+                  {paymentOptions.map((option) => (
                     <button
-                      key={value}
+                      key={option.value}
                       type="button"
-                      className={`rounded-[var(--r-md)] border px-3 py-3 text-sm font-black ${
-                        paymentMethod === value
+                      aria-pressed={effectivePaymentSelection === option.value}
+                      className={`rounded-[var(--r-md)] border px-3 py-3 text-left ${
+                        effectivePaymentSelection === option.value
                           ? "border-[var(--court-500)] bg-[var(--court-50)] text-[var(--court-700)]"
                           : "border-[var(--ink-200)] bg-white"
                       }`}
-                      onClick={() => setPaymentMethod(value as "club" | "transfer")}
+                      onClick={() => setPaymentSelection(option.value)}
                     >
-                      {label}
+                      <span className="flex items-start justify-between gap-3">
+                        <span>
+                          <span className="block text-sm font-black">
+                            {option.label}
+                          </span>
+                          <span className="mt-1 block text-xs font-bold text-[var(--ink-500)]">
+                            {option.description}
+                          </span>
+                        </span>
+                        {effectivePaymentSelection === option.value ? (
+                          <Check size={18} className="mt-0.5 shrink-0" />
+                        ) : null}
+                      </span>
+                      <span className="mt-3 grid gap-1 text-sm font-black text-[var(--ink-800)]">
+                        {option.lines.map((line) => (
+                          <span key={line}>{line}</span>
+                        ))}
+                      </span>
                     </button>
                   ))}
                 </div>
+                {showDepositChoice || showFullPaymentChoice ? (
+                  <p className="mt-3 text-xs font-bold text-[var(--ink-500)]">
+                    El pago online se procesa con Mercado Pago. El club recibe el
+                    dinero directamente en su cuenta.
+                  </p>
+                ) : null}
               </div>
 
-              {showDepositChoice ? (
-                <div className="rounded-[var(--r-lg)] border border-[var(--court-200)] bg-[var(--court-50)] p-4">
-                  <p className="mb-3 text-xs font-black uppercase tracking-[0.14em] text-[var(--court-700)]">
-                    Anticipo opcional
-                  </p>
-                  <SummaryRow
-                    label="Total estimado"
-                    value={formatCOP(depositPreview!.estimatedTotal)}
-                  />
-                  {depositPreview!.estimatedMembershipDiscount > 0 ? (
-                    <SummaryRow
-                      label="Descuento membresia"
-                      value={`-${formatCOP(
-                        depositPreview!.estimatedMembershipDiscount,
-                      )}`}
-                    />
-                  ) : null}
-                  <SummaryRow
-                    label="Anticipo sugerido"
-                    value={formatCOP(depositPreview!.depositSuggestedAmount)}
-                  />
-                  <SummaryRow
-                    label="Saldo estimado en club"
-                    value={formatCOP(depositBalanceDue)}
-                  />
-                  <p className="mt-3 text-sm font-bold text-[var(--court-700)]">
-                    El anticipo se descuenta del total de la reserva. El saldo
-                    final se confirma en recepcion.
-                  </p>
-                </div>
-              ) : hasDepositWaiver ? (
+              {hasDepositWaiver ? (
                 <div className="rounded-[var(--r-lg)] border border-[var(--court-200)] bg-[var(--court-50)] p-4 text-sm font-bold text-[var(--court-700)]">
                   <p>Tu membresia te permite reservar sin anticipo.</p>
                   <p>El saldo final se liquida en recepcion.</p>
@@ -379,36 +425,82 @@ export function ConfirmClient({
                   submittingOption !== null
                 }
               >
-                <Check size={17} />
-                {submittingOption === "pay_at_club"
-                  ? "Confirmando..."
-                  : showDepositChoice || hasDepositWaiver
-                    ? "Reservar sin anticipo"
-                    : "Confirmar reserva"}
+                {primaryButtonIcon}
+                {primaryButtonLabel}
               </button>
-              {showDepositChoice ? (
-                <button
-                  type="button"
-                  className="btn btn-dark btn-block"
-                  disabled={
-                    !formValid ||
-                    selectedSlotUnavailable ||
-                    submittingOption !== null
-                  }
-                  onClick={() => void submitBooking("deposit_online")}
-                >
-                  <CreditCard size={17} />
-                  {submittingOption === "deposit_online"
-                    ? "Abriendo Mercado Pago..."
-                    : "Reservar y pagar anticipo"}
-                </button>
-              ) : null}
             </form>
           </div>
         </div>
       </div>
     </PlayerShell>
   );
+}
+
+function buildPaymentOptions({
+  total,
+  showDepositChoice,
+  showFullPaymentChoice,
+}: {
+  total: number;
+  showDepositChoice: boolean;
+  showFullPaymentChoice: boolean;
+}): Array<{
+  value: PaymentSelection;
+  label: string;
+  description: string;
+  lines: string[];
+}> {
+  if (total <= 0) return [];
+
+  const payAtClub = calculateReservationPaymentBreakdown(total, "pay_at_club");
+  const transfer = {
+    value: "transfer" as const,
+    label: "Transferencia",
+    description: "Reserva ahora y coordina la transferencia con el club.",
+    lines: [`${formatCOP(total)} por transferencia`],
+  };
+  const options: Array<{
+    value: PaymentSelection;
+    label: string;
+    description: string;
+    lines: string[];
+  }> = [
+    {
+      value: "pay_at_club",
+      label: payAtClub.label,
+      description: payAtClub.description,
+      lines: [`${formatCOP(payAtClub.pendingAtReception)} en club`],
+    },
+    transfer,
+  ];
+
+  if (showDepositChoice) {
+    const deposit = calculateReservationPaymentBreakdown(total, "deposit");
+    options.push({
+      value: "deposit",
+      label: deposit.label,
+      description: deposit.description,
+      lines: [
+        `Pagas ahora: ${formatCOP(deposit.onlineAmount)}`,
+        `Saldo en club: ${formatCOP(deposit.pendingAtReception)}`,
+      ],
+    });
+  }
+
+  if (showFullPaymentChoice) {
+    const fullPayment = calculateReservationPaymentBreakdown(total, "full_payment");
+    options.push({
+      value: "full_payment",
+      label: fullPayment.label,
+      description: fullPayment.description,
+      lines: [
+        `Pagas ahora: ${formatCOP(fullPayment.onlineAmount)}`,
+        `Saldo en club: ${formatCOP(fullPayment.pendingAtReception)}`,
+      ],
+    });
+  }
+
+  return options;
 }
 
 function AvailabilityRecovery({ href }: { href: string }) {

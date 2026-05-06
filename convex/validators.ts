@@ -43,6 +43,7 @@ export const depositStatusValidator = v.union(
 export const paymentOptionSelectedValidator = v.union(
   v.literal("pay_at_club"),
   v.literal("deposit_online"),
+  v.literal("full_payment_online"),
 );
 
 export const reservationPaymentProviderValidator = v.union(

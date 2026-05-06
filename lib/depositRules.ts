@@ -1,7 +1,10 @@
 export type DepositType = "percentage" | "fixed";
 export type DepositMode = "optional";
 export type DepositStatus = "none" | "pending" | "paid" | "failed" | "refunded";
-export type PaymentOptionSelected = "pay_at_club" | "deposit_online";
+export type PaymentOptionSelected =
+  | "pay_at_club"
+  | "deposit_online"
+  | "full_payment_online";
 export type ReservationPaymentStatus =
   | "created"
   | "pending"

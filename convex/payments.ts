@@ -3,7 +3,6 @@ import { ConvexError, v } from "convex/values";
 
 import { BOGOTA_TIMEZONE, calculateBookingValue } from "../lib/bookingRules";
 import {
-  applyDepositWebhookState,
   calculateSuggestedDeposit,
   estimateMembershipForDeposit,
   normalizeDepositSettings,
@@ -29,7 +28,14 @@ import {
   type PaymentTransactionSummaryInput,
 } from "../lib/paymentTransactionRules";
 import {
-  createMercadoPagoDepositPreference,
+  applyReservationPaymentWebhookState,
+  buildReservationPaymentExternalReference,
+  calculateReservationDepositAmount,
+  isReservationPaymentExternalReferenceForType,
+  type OnlineReservationPaymentType,
+} from "../lib/reservationPaymentOptionRules";
+import {
+  createMercadoPagoReservationPreference,
   getMercadoPagoCheckoutUrl,
   getMercadoPagoPayment,
   isMercadoPagoUnauthorizedError,
@@ -83,6 +89,7 @@ const depositPreviewValidator = v.object({
   estimatedMembershipDiscount: v.number(),
   estimatedTotal: v.number(),
   depositSuggestedAmount: v.number(),
+  fullPaymentAmount: v.number(),
   estimatedBalanceDue: v.number(),
   playerHasDepositWaiver: v.boolean(),
   membershipSnapshot: v.union(v.null(), v.any()),
@@ -104,7 +111,7 @@ type CreateDepositResult = {
   error?: string;
 };
 
-type DepositPreparation = {
+type ReservationPaymentPreparation = {
   clubId: Id<"clubs">;
   clubSlug: string;
   clubName: string;
@@ -118,6 +125,7 @@ type DepositPreparation = {
   customerPhone: string;
   customerEmail?: string;
   amount: number;
+  paymentType: OnlineReservationPaymentType;
 };
 
 type MercadoPagoAccessTokenForOperation = {
@@ -433,12 +441,19 @@ async function buildDepositEstimate(args: {
     playerHasDepositWaiver: membershipEstimate.playerHasDepositWaiver,
     clubDepositSettings: args.club,
   });
+  const depositSuggestedAmount =
+    deposit.estimatedPayableTotal > 0 && !membershipEstimate.playerHasDepositWaiver
+      ? calculateReservationDepositAmount(deposit.estimatedPayableTotal)
+      : 0;
 
   return {
     ...membershipEstimate,
     estimatedTotal: deposit.estimatedPayableTotal,
-    depositSuggestedAmount: deposit.depositAmount,
-    estimatedBalanceDue: deposit.estimatedPayableTotal,
+    depositSuggestedAmount,
+    estimatedBalanceDue: Math.max(
+      deposit.estimatedPayableTotal - depositSuggestedAmount,
+      0,
+    ),
   };
 }
 
@@ -529,7 +544,10 @@ export const getOnlineDepositPreview = query({
       depositSuggestedAmount: onlineDepositsEnabled
         ? estimate.depositSuggestedAmount
         : 0,
-      estimatedBalanceDue: estimate.estimatedTotal,
+      fullPaymentAmount: onlineDepositsEnabled ? estimate.estimatedTotal : 0,
+      estimatedBalanceDue: onlineDepositsEnabled
+        ? estimate.estimatedBalanceDue
+        : estimate.estimatedTotal,
       playerHasDepositWaiver: estimate.playerHasDepositWaiver,
       membershipSnapshot: estimate.membershipSnapshot,
     };
@@ -705,7 +723,7 @@ export const createOnlineDepositBooking = action({
       throw new ConvexError("Debes iniciar sesion.");
     }
 
-    const preparation: DepositPreparation = await ctx.runMutation(
+    const preparation: ReservationPaymentPreparation = await ctx.runMutation(
       internal.payments._createOnlineDepositReservation,
       {
         ...args,
@@ -713,64 +731,96 @@ export const createOnlineDepositBooking = action({
       },
     );
 
-    try {
-      const preference = await runMercadoPagoOperationWithValidToken(ctx, {
-        clubId: preparation.clubId,
-        reason: "create_deposit_preference",
-        operation: async (accessToken) =>
-          await createMercadoPagoDepositPreference({
-            sellerAccessToken: accessToken,
-            clubId: preparation.clubId,
-            clubSlug: preparation.clubSlug,
-            clubName: preparation.clubName,
-            courtId: preparation.courtId,
-            courtName: preparation.courtName,
-            reservationId: preparation.bookingId,
-            reservationCode: preparation.code,
-            reservationPaymentId: preparation.paymentId,
-            userId: preparation.userId,
-            customerName: preparation.customerName,
-            customerPhone: preparation.customerPhone,
-            customerEmail: preparation.customerEmail,
-            amount: preparation.amount,
-          }),
-      });
-      const checkoutUrl = getMercadoPagoCheckoutUrl(preference);
-
-      if (!checkoutUrl) {
-        throw new Error("Mercado Pago no retorno una URL de pago.");
-      }
-
-      await ctx.runMutation(internal.payments._attachDepositPreference, {
-        bookingId: preparation.bookingId,
-        paymentId: preparation.paymentId,
-        preferenceId: preference.id,
-        initPoint: preference.init_point,
-        sandboxInitPoint: preference.sandbox_init_point,
-      });
-
-      return {
-        code: preparation.code,
-        bookingId: preparation.bookingId,
-        paymentId: preparation.paymentId,
-        checkoutUrl,
-      };
-    } catch (error) {
-      await ctx.runMutation(internal.payments._markDepositPreferenceFailed, {
-        bookingId: preparation.bookingId,
-        paymentId: preparation.paymentId,
-        message: safeMercadoPagoErrorMessage(error),
-      });
-
-      return {
-        code: preparation.code,
-        bookingId: preparation.bookingId,
-        paymentId: preparation.paymentId,
-        error: publicMercadoPagoErrorMessage(error),
-      };
-    }
+    return await createReservationPaymentPreference(ctx, preparation);
   },
 });
+
+export const createOnlineFullPaymentBooking = action({
+  args: onlineDepositBookingArgs,
+  returns: createDepositResultValidator,
+  handler: async (ctx, args): Promise<CreateDepositResult> => {
+    const userId = await getAuthUserId(ctx);
+
+    if (!userId) {
+      throw new ConvexError("Debes iniciar sesion.");
+    }
+
+    const preparation: ReservationPaymentPreparation = await ctx.runMutation(
+      internal.payments._createOnlineFullPaymentReservation,
+      {
+        ...args,
+        userId: userId as Id<"users">,
+      },
+    );
+
+    return await createReservationPaymentPreference(ctx, preparation);
+  },
+});
+
+async function createReservationPaymentPreference(
+  ctx: ActionCtx,
+  preparation: ReservationPaymentPreparation,
+): Promise<CreateDepositResult> {
+  try {
+    const preference = await runMercadoPagoOperationWithValidToken(ctx, {
+      clubId: preparation.clubId,
+      reason: `create_${preparation.paymentType}_preference`,
+      operation: async (accessToken) =>
+        await createMercadoPagoReservationPreference({
+          sellerAccessToken: accessToken,
+          clubId: preparation.clubId,
+          clubSlug: preparation.clubSlug,
+          clubName: preparation.clubName,
+          courtId: preparation.courtId,
+          courtName: preparation.courtName,
+          reservationId: preparation.bookingId,
+          reservationCode: preparation.code,
+          reservationPaymentId: preparation.paymentId,
+          userId: preparation.userId,
+          customerName: preparation.customerName,
+          customerPhone: preparation.customerPhone,
+          customerEmail: preparation.customerEmail,
+          amount: preparation.amount,
+          paymentType: preparation.paymentType,
+        }),
+    });
+    const checkoutUrl = getMercadoPagoCheckoutUrl(preference);
+
+    if (!checkoutUrl) {
+      throw new Error("Mercado Pago no retorno una URL de pago.");
+    }
+
+    await ctx.runMutation(internal.payments._attachReservationPaymentPreference, {
+      bookingId: preparation.bookingId,
+      paymentId: preparation.paymentId,
+      preferenceId: preference.id,
+      initPoint: preference.init_point,
+      sandboxInitPoint: preference.sandbox_init_point,
+      paymentType: preparation.paymentType,
+    });
+
+    return {
+      code: preparation.code,
+      bookingId: preparation.bookingId,
+      paymentId: preparation.paymentId,
+      checkoutUrl,
+    };
+  } catch (error) {
+    await ctx.runMutation(internal.payments._markReservationPaymentPreferenceFailed, {
+      bookingId: preparation.bookingId,
+      paymentId: preparation.paymentId,
+      paymentType: preparation.paymentType,
+      message: safeMercadoPagoErrorMessage(error),
+    });
+
+    return {
+      code: preparation.code,
+      bookingId: preparation.bookingId,
+      paymentId: preparation.paymentId,
+      error: publicMercadoPagoErrorMessage(error),
+    };
+  }
+}
 
 export const _createOnlineDepositReservation = internalMutation({
   args: {
@@ -791,6 +841,7 @@ export const _createOnlineDepositReservation = internalMutation({
     customerPhone: v.string(),
     customerEmail: v.optional(v.string()),
     amount: v.number(),
+    paymentType: v.literal("deposit"),
   }),
   handler: async (ctx, args) => {
     const club = await getClubOrThrow(ctx, args.clubSlug, {
@@ -866,9 +917,9 @@ export const _createOnlineDepositReservation = internalMutation({
       customerPhone: args.customerPhone.trim(),
       customerEmail: customerEmail?.trim() || undefined,
       source: "online",
-      paymentMethod: "club",
+      paymentMethod: "mercadopago",
       paymentStatus: "pending",
-      bookingStatus: "confirmed",
+      bookingStatus: "payment_pending",
       value,
       basePrice: value,
       estimatedMembershipDiscount: estimate.estimatedMembershipDiscount,
@@ -903,7 +954,10 @@ export const _createOnlineDepositReservation = internalMutation({
     });
 
     await ctx.db.patch(paymentId, {
-      externalReference: `deposit:${paymentId}`,
+      externalReference: buildReservationPaymentExternalReference(
+        "deposit",
+        paymentId,
+      ),
     });
 
     return {
@@ -920,17 +974,176 @@ export const _createOnlineDepositReservation = internalMutation({
       customerPhone: args.customerPhone.trim(),
       customerEmail: customerEmail?.trim() || undefined,
       amount: estimate.depositSuggestedAmount,
+      paymentType: "deposit" as const,
     };
   },
 });
 
-export const _attachDepositPreference = internalMutation({
+export const _createOnlineFullPaymentReservation = internalMutation({
+  args: {
+    ...onlineDepositBookingArgs,
+    userId: v.id("users"),
+  },
+  returns: v.object({
+    clubId: v.id("clubs"),
+    clubSlug: v.string(),
+    clubName: v.string(),
+    courtId: v.id("courts"),
+    courtName: v.string(),
+    bookingId: v.id("bookings"),
+    code: v.string(),
+    paymentId: v.id("reservationPayments"),
+    userId: v.id("users"),
+    customerName: v.string(),
+    customerPhone: v.string(),
+    customerEmail: v.optional(v.string()),
+    amount: v.number(),
+    paymentType: v.literal("full_payment"),
+  }),
+  handler: async (ctx, args) => {
+    const club = await getClubOrThrow(ctx, args.clubSlug, {
+      requirePublished: true,
+      requireBookingEnabled: true,
+    });
+    const court = await getCourtOrThrow(ctx, args.courtId);
+    await assertCanBook({ ctx, club, court, ...args });
+    const connection = await getActiveMercadoPagoConnection(ctx, club._id);
+
+    if (!hasUsableMercadoPagoConnection(connection)) {
+      throw new ConvexError({
+        code: "MERCADOPAGO_NOT_CONNECTED",
+        message: "Este club no tiene Mercado Pago conectado.",
+      });
+    }
+
+    if (!(club.onlineDepositsEnabled ?? false)) {
+      throw new ConvexError({
+        code: "ONLINE_PAYMENTS_DISABLED",
+        message: "Este club no tiene pagos online activos.",
+      });
+    }
+
+    const user = await ctx.db.get(args.userId);
+    const now = Date.now();
+    const value = calculateBookingValue(
+      args.localDate,
+      args.startMinutes,
+      args.durationMinutes,
+      club.pricing,
+    );
+    const code = await buildBookingCode(ctx);
+    const customerEmail = args.customerEmail?.trim() || user?.email;
+    const customerId = await upsertCustomer(ctx, {
+      clubId: club._id,
+      fullName: args.customerName,
+      phone: args.customerPhone,
+      email: customerEmail,
+      userId: args.userId,
+      source: "online",
+    });
+    const estimate = await buildDepositEstimate({
+      ctx,
+      club,
+      customerId,
+      localDate: args.localDate,
+      startMinutes: args.startMinutes,
+      baseReservationTotal: value,
+    });
+
+    if (estimate.estimatedTotal <= 0) {
+      throw new ConvexError({
+        code: "PAYMENT_NOT_REQUIRED",
+        message: "Esta reserva no requiere pago online.",
+      });
+    }
+
+    const bookingId = await ctx.db.insert("bookings", {
+      clubId: club._id,
+      courtId: court._id,
+      customerId,
+      playerUserId: args.userId,
+      createdByUserId: args.userId,
+      createdByRole: "player",
+      code,
+      localDate: args.localDate,
+      startMinutes: args.startMinutes,
+      durationMinutes: args.durationMinutes,
+      endMinutes: args.startMinutes + args.durationMinutes,
+      timezone: BOGOTA_TIMEZONE,
+      customerName: args.customerName.trim(),
+      customerPhone: args.customerPhone.trim(),
+      customerEmail: customerEmail?.trim() || undefined,
+      source: "online",
+      paymentMethod: "mercadopago",
+      paymentStatus: "pending",
+      bookingStatus: "payment_pending",
+      value,
+      basePrice: value,
+      estimatedMembershipDiscount: estimate.estimatedMembershipDiscount,
+      estimatedTotal: estimate.estimatedTotal,
+      depositSuggestedAmount: 0,
+      depositPaidAmount: 0,
+      depositStatus: "none",
+      paymentOptionSelected: "full_payment_online",
+      estimatedBalanceDue: estimate.estimatedTotal,
+      membershipSnapshot: estimate.membershipSnapshot,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const paymentId = await ctx.db.insert("reservationPayments", {
+      reservationId: bookingId,
+      clubId: club._id,
+      userId: args.userId,
+      provider: "mercadopago",
+      type: "full_payment",
+      status: "created",
+      amount: estimate.estimatedTotal,
+      currency: "COP",
+      externalReference: "",
+      metadata: {
+        reservationId: bookingId,
+        clubId: club._id,
+        userId: args.userId,
+        paymentType: "full_payment",
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.patch(paymentId, {
+      externalReference: buildReservationPaymentExternalReference(
+        "full_payment",
+        paymentId,
+      ),
+    });
+
+    return {
+      clubId: club._id,
+      clubSlug: club.slug,
+      clubName: club.name,
+      courtId: court._id,
+      courtName: court.name,
+      bookingId,
+      code,
+      paymentId,
+      userId: args.userId,
+      customerName: args.customerName.trim(),
+      customerPhone: args.customerPhone.trim(),
+      customerEmail: customerEmail?.trim() || undefined,
+      amount: estimate.estimatedTotal,
+      paymentType: "full_payment" as const,
+    };
+  },
+});
+
+export const _attachReservationPaymentPreference = internalMutation({
   args: {
     bookingId: v.id("bookings"),
     paymentId: v.id("reservationPayments"),
     preferenceId: v.string(),
     initPoint: v.optional(v.string()),
     sandboxInitPoint: v.optional(v.string()),
+    paymentType: reservationPaymentTypeValidator,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -941,19 +1154,31 @@ export const _attachDepositPreference = internalMutation({
       sandboxInitPoint: args.sandboxInitPoint,
       updatedAt: Date.now(),
     });
-    await ctx.db.patch(args.bookingId, {
-      depositStatus: "pending",
-      updatedAt: Date.now(),
-    });
+    const bookingPatch =
+      args.paymentType === "deposit"
+        ? {
+            depositStatus: "pending" as const,
+            bookingStatus: "payment_pending" as const,
+            paymentStatus: "pending" as const,
+            updatedAt: Date.now(),
+          }
+        : {
+            bookingStatus: "payment_pending" as const,
+            paymentStatus: "pending" as const,
+            updatedAt: Date.now(),
+          };
+
+    await ctx.db.patch(args.bookingId, bookingPatch);
 
     return null;
   },
 });
 
-export const _markDepositPreferenceFailed = internalMutation({
+export const _markReservationPaymentPreferenceFailed = internalMutation({
   args: {
     bookingId: v.id("bookings"),
     paymentId: v.id("reservationPayments"),
+    paymentType: reservationPaymentTypeValidator,
     message: v.string(),
   },
   returns: v.null(),
@@ -966,12 +1191,26 @@ export const _markDepositPreferenceFailed = internalMutation({
       mercadoPagoStatusDetail: args.message,
       updatedAt: Date.now(),
     });
-    await ctx.db.patch(args.bookingId, {
-      depositStatus: "failed",
-      depositPaidAmount: booking?.depositPaidAmount ?? 0,
-      estimatedBalanceDue: estimatedTotal,
-      updatedAt: Date.now(),
-    });
+    const bookingPatch =
+      args.paymentType === "deposit"
+        ? {
+            bookingStatus: "expired" as const,
+            paymentStatus: "failed" as const,
+            depositStatus: "failed" as const,
+            depositPaidAmount: booking?.depositPaidAmount ?? 0,
+            estimatedBalanceDue: estimatedTotal,
+            expiredAt: Date.now(),
+            updatedAt: Date.now(),
+          }
+        : {
+            bookingStatus: "expired" as const,
+            paymentStatus: "failed" as const,
+            estimatedBalanceDue: estimatedTotal,
+            expiredAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+
+    await ctx.db.patch(args.bookingId, bookingPatch);
 
     return null;
   },
@@ -1166,10 +1405,15 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
         : null);
 
     if (!payment || payment.clubId !== args.clubId) {
-      throw new Error("No encontramos el intento de anticipo.");
+      throw new Error("No encontramos el intento de pago.");
     }
 
-    if (payment.type !== "deposit" || !payment.externalReference.startsWith("deposit:")) {
+    if (
+      !isReservationPaymentExternalReferenceForType(
+        args.externalReference ?? payment.externalReference,
+        payment.type,
+      )
+    ) {
       throw new Error("Mercado Pago envio una referencia invalida.");
     }
 
@@ -1203,16 +1447,18 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
 
     const booking = await ctx.db.get(payment.reservationId);
     if (!booking) {
-      throw new Error("No encontramos la reserva del anticipo.");
+      throw new Error("No encontramos la reserva del pago.");
     }
 
-    const grossAmountForDeposit =
+    const grossAmountForPayment =
       args.grossAmount ?? payment.grossAmount ?? args.amount ?? payment.amount;
-    const webhookState = applyDepositWebhookState({
+    const webhookState = applyReservationPaymentWebhookState({
+      paymentType: payment.type,
+      currentReservationPaymentStatus: payment.status,
       currentDepositStatus: booking.depositStatus ?? "none",
       currentDepositPaidAmount: booking.depositPaidAmount ?? 0,
       estimatedTotal: booking.estimatedTotal ?? booking.value,
-      paymentAmount: grossAmountForDeposit,
+      paymentAmount: grossAmountForPayment,
       providerStatus: args.status,
     });
     const shouldApplyIncomingFinancialSnapshot =
@@ -1220,7 +1466,7 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
       args.financialSnapshotStatus === "complete";
     const financialPatch = shouldApplyIncomingFinancialSnapshot
       ? {
-          grossAmount: grossAmountForDeposit,
+          grossAmount: grossAmountForPayment,
           gatewayFeeAmount: args.gatewayFeeAmount,
           taxWithholdingAmount: args.taxWithholdingAmount,
           totalDeductionsAmount: args.totalDeductionsAmount,
@@ -1240,7 +1486,7 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
         };
 
     await ctx.db.patch(payment._id, {
-      status: webhookState.paymentStatus,
+      status: webhookState.reservationPaymentStatus,
       mercadoPagoPaymentId: args.mercadoPagoPaymentId,
       mercadoPagoPreferenceId:
         args.mercadoPagoPreferenceId ?? payment.mercadoPagoPreferenceId,
@@ -1249,18 +1495,32 @@ export const _applyMercadoPagoDepositWebhook = internalMutation({
       amount: args.amount ?? payment.amount,
       currency: args.currency ?? payment.currency,
       paidAt:
-        webhookState.paymentStatus === "approved" ? args.paidAt ?? now : payment.paidAt,
+        webhookState.reservationPaymentStatus === "approved"
+          ? args.paidAt ?? now
+          : payment.paidAt,
       rawProviderResponse: args.rawProviderResponse,
       updatedAt: now,
       ...financialPatch,
     });
 
-    await ctx.db.patch(booking._id, {
+    const bookingPatch: Partial<Doc<"bookings">> = {
+      bookingStatus: webhookState.bookingStatus,
+      paymentStatus: webhookState.bookingPaymentStatus,
       depositStatus: webhookState.depositStatus,
       depositPaidAmount: webhookState.depositPaidAmount,
       estimatedBalanceDue: webhookState.estimatedBalanceDue,
       updatedAt: now,
-    });
+    };
+
+    if (webhookState.bookingPaymentStatus === "paid") {
+      bookingPatch.paidAt = args.paidAt ?? now;
+    }
+
+    if (webhookState.bookingStatus === "expired") {
+      bookingPatch.expiredAt = now;
+    }
+
+    await ctx.db.patch(booking._id, bookingPatch);
     const event = await ctx.db
       .query("paymentWebhookEvents")
       .withIndex("by_provider_event", (q) =>
