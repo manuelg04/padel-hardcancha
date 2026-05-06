@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth, useQuery } from "convex/react";
+import { LogIn, LogOut, User } from "lucide-react";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import { ClubCityFilter } from "./ClubCityFilter";
@@ -13,6 +15,12 @@ export function ClubDirectoryClient() {
   const clubs = useQuery(api.clubs.listPublishedClubs, {});
   const [search, setSearch] = useState("");
   const [city, setCity] = useState("");
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
+  const { signOut } = useAuthActions();
+  const currentUser = useQuery(
+    api.users.getCurrentUser,
+    isAuthenticated ? {} : "skip",
+  );
 
   const cities = useMemo(() => {
     if (!clubs) return [];
@@ -48,9 +56,33 @@ export function ClubDirectoryClient() {
             </span>
             CanchaBGA Padel
           </Link>
-          <Link className="btn btn-ghost hidden sm:inline-flex" href="/super-admin/login">
-            Super admin
-          </Link>
+          {!authLoading && (
+            isAuthenticated && currentUser ? (
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 rounded-full border border-[var(--ink-200)] bg-[var(--ink-100)] px-3 py-1.5 text-sm font-bold text-[var(--ink-700)]">
+                  <User size={13} className="text-[var(--ink-400)]" />
+                  {currentUser.name ?? currentUser.email}
+                </span>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => void signOut()}
+                >
+                  <LogOut size={15} />
+                  Salir
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Link className="btn btn-ghost" href="/login">
+                  <LogIn size={15} />
+                  Iniciar sesion
+                </Link>
+                <Link className="btn btn-ghost hidden sm:inline-flex" href="/super-admin/login">
+                  Super admin
+                </Link>
+              </div>
+            )
+          )}
         </div>
       </header>
 
