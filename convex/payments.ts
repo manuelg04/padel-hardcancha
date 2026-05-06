@@ -178,6 +178,8 @@ const paymentTransactionKpisValidator = v.object({
   netReceivedAmount: v.number(),
   pendingReceptionAmount: v.number(),
   transactionCount: v.number(),
+  approvedPaymentCount: v.number(),
+  pendingAttemptCount: v.number(),
   depositCount: v.number(),
   fullPaymentCount: v.number(),
   missingFinancialBreakdownCount: v.number(),

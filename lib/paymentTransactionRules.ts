@@ -32,6 +32,8 @@ export type PaymentTransactionsKpis = {
   netReceivedAmount: number;
   pendingReceptionAmount: number;
   transactionCount: number;
+  approvedPaymentCount: number;
+  pendingAttemptCount: number;
   depositCount: number;
   fullPaymentCount: number;
   missingFinancialBreakdownCount: number;
@@ -58,6 +60,10 @@ export function isCollectedPaymentStatus(status: PaymentTransactionStatus) {
   return status === "approved";
 }
 
+export function isPendingPaymentAttemptStatus(status: PaymentTransactionStatus) {
+  return status === "created" || status === "pending";
+}
+
 export function sumApprovedGrossByReservation(
   payments: PaymentTransactionSummaryInput[],
 ) {
@@ -81,12 +87,19 @@ export function calculatePaymentTransactionsKpis(
   approvedGrossByReservation = sumApprovedGrossByReservation(payments),
 ): PaymentTransactionsKpis {
   const seenReservations = new Set<string>();
+  const reservationsWithApprovedPayments = new Set(
+    payments
+      .filter((payment) => isCollectedPaymentStatus(payment.status))
+      .map((payment) => payment.reservationId),
+  );
   const totals: PaymentTransactionsKpis = {
     grossCollectedAmount: 0,
     gatewayDeductionsAmount: 0,
     netReceivedAmount: 0,
     pendingReceptionAmount: 0,
     transactionCount: payments.length,
+    approvedPaymentCount: 0,
+    pendingAttemptCount: 0,
     depositCount: 0,
     fullPaymentCount: 0,
     missingFinancialBreakdownCount: 0,
@@ -95,8 +108,13 @@ export function calculatePaymentTransactionsKpis(
   for (const payment of payments) {
     if (payment.type === "deposit") totals.depositCount += 1;
     if (payment.type === "full_payment") totals.fullPaymentCount += 1;
+    if (isCollectedPaymentStatus(payment.status)) totals.approvedPaymentCount += 1;
+    if (isPendingPaymentAttemptStatus(payment.status)) totals.pendingAttemptCount += 1;
 
-    if (!seenReservations.has(payment.reservationId)) {
+    if (
+      reservationsWithApprovedPayments.has(payment.reservationId) &&
+      !seenReservations.has(payment.reservationId)
+    ) {
       seenReservations.add(payment.reservationId);
       totals.pendingReceptionAmount = addMoney(
         totals.pendingReceptionAmount,

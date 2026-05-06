@@ -7,6 +7,10 @@ import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { api } from "@/convex/_generated/api";
 import { formatBookingStatus, formatCOP, formatCurrencyCode } from "@/lib/format";
+import {
+  isCollectedPaymentStatus,
+  isPendingPaymentAttemptStatus,
+} from "@/lib/paymentTransactionRules";
 import { AdminLayout } from "./AdminLayout";
 
 type PaymentTransactionsArgs = FunctionArgs<
@@ -204,8 +208,8 @@ function PaymentsContent() {
             <div className="border-b border-[var(--ink-200)] p-4">
               <h2 className="text-lg font-black">Transacciones</h2>
               <p className="mt-1 text-sm text-[var(--ink-500)]">
-                El saldo pendiente se calcula con el valor bruto pagado por el
-                jugador, no con el neto recibido por el club.
+                Los valores financieros solo cuentan pagos aprobados; los intentos
+                pendientes quedan visibles para trazabilidad.
               </p>
             </div>
             {transactions.rows.length === 0 ? (
@@ -334,27 +338,32 @@ function KpiGrid({ kpis }: { kpis: PaymentTransactionsResult["kpis"] }) {
     {
       label: "Cobrado online bruto",
       value: formatNullableCOP(kpis.grossCollectedAmount),
-      hint: "Bruto pagado por jugadores",
+      hint: "Solo pagos aprobados",
     },
     {
       label: "Cargos Mercado Pago",
       value: formatNullableCOP(kpis.gatewayDeductionsAmount),
-      hint: "Comisiones, cargos o retenciones",
+      hint: "Solo pagos aprobados",
     },
     {
       label: "Neto recibido",
       value: formatNullableCOP(kpis.netReceivedAmount),
-      hint: "Disponible/neto según Mercado Pago",
+      hint: "Solo pagos aprobados",
     },
     {
       label: "Saldo pendiente en recepción",
       value: formatNullableCOP(kpis.pendingReceptionAmount),
-      hint: "Por cobrar en club",
+      hint: "Solo reservas con pago aprobado",
     },
     {
-      label: "Transacciones",
-      value: formatCount(kpis.transactionCount),
-      hint: "Pagos online",
+      label: "Pagos aprobados",
+      value: formatCount(kpis.approvedPaymentCount),
+      hint: "Transacciones cobradas",
+    },
+    {
+      label: "Intentos pendientes",
+      value: formatCount(kpis.pendingAttemptCount),
+      hint: "Pagos iniciados sin aprobación",
     },
     ...(typeof kpis.missingFinancialBreakdownCount === "number"
       ? [
@@ -368,7 +377,7 @@ function KpiGrid({ kpis }: { kpis: PaymentTransactionsResult["kpis"] }) {
   ];
 
   return (
-    <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+    <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
       {items.map((item) => (
         <article
           key={item.label}
@@ -413,7 +422,10 @@ function PaymentsTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--ink-200)]">
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const isApproved = isCollectedPaymentStatus(row.status);
+
+            return (
             <tr key={row.id} className="align-top">
               <td className="px-4 py-4">
                 <p className="font-bold text-[var(--ink-900)]">
@@ -445,8 +457,15 @@ function PaymentsTable({
               <td className="px-4 py-4 font-bold text-[var(--ink-700)]">
                 {typeLabels[row.type]}
               </td>
-              <td className="px-4 py-4 text-right font-black">
-                {formatNullableCOP(row.grossAmount)}
+              <td className="px-4 py-4 text-right">
+                <p className="font-black">{formatNullableCOP(row.grossAmount)}</p>
+                {!isApproved ? (
+                  <p className="text-xs text-[var(--ink-500)]">
+                    {isPendingPaymentAttemptStatus(row.status)
+                      ? "Intentado"
+                      : "No cobrado"}
+                  </p>
+                ) : null}
               </td>
               <td className="px-4 py-4 text-right">
                 <p className="font-black">
@@ -458,12 +477,23 @@ function PaymentsTable({
                 {formatNullableCOP(row.netReceivedAmount)}
               </td>
               <td className="px-4 py-4 text-right">
-                <p className="font-black">
-                  {formatNullableCOP(row.pendingAmountAtReception)}
-                </p>
-                <p className="text-xs text-[var(--ink-500)]">
-                  Total {formatNullableCOP(row.totalReservationAmount)}
-                </p>
+                {isApproved ? (
+                  <>
+                    <p className="font-black">
+                      {formatNullableCOP(row.pendingAmountAtReception)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-500)]">
+                      Total {formatNullableCOP(row.totalReservationAmount)}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-black">No aplica</p>
+                    <p className="text-xs text-[var(--ink-500)]">
+                      Pago no aprobado
+                    </p>
+                  </>
+                )}
               </td>
               <td className="px-4 py-4">
                 <StatusBadge status={row.status} />
@@ -493,7 +523,8 @@ function PaymentsTable({
                 </button>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -646,6 +677,8 @@ function PaymentDetailFrame({
 }
 
 function PaymentDetailSections({ detail }: { detail: PaymentDetail }) {
+  const isApproved = isCollectedPaymentStatus(detail.status);
+
   return (
     <>
       <DetailSection title="Resumen financiero">
@@ -654,7 +687,7 @@ function PaymentDetailSections({ detail }: { detail: PaymentDetail }) {
           value={formatNullableCOP(detail.totalReservationAmount)}
         />
         <DetailRow
-          label="Pagado por el jugador"
+          label={isApproved ? "Pagado por el jugador" : "Monto intentado"}
           value={formatNullableCOP(detail.grossAmount)}
         />
         <DetailRow
@@ -667,11 +700,16 @@ function PaymentDetailSections({ detail }: { detail: PaymentDetail }) {
         />
         <DetailRow
           label="Saldo pendiente en recepción"
-          value={formatNullableCOP(detail.pendingAmountAtReception)}
+          value={
+            isApproved
+              ? formatNullableCOP(detail.pendingAmountAtReception)
+              : "No aplica"
+          }
         />
         <p className="mt-3 rounded-[var(--r-md)] bg-[var(--ink-50)] p-3 text-sm font-bold text-[var(--ink-600)]">
-          El saldo pendiente se calcula con el valor bruto pagado por el jugador,
-          no con el neto recibido por el club.
+          {isApproved
+            ? "El saldo pendiente se calcula con el valor bruto pagado por el jugador, no con el neto recibido por el club."
+            : "Este pago aún no fue aprobado, por eso no suma al cobrado online ni al saldo por cobrar en recepción."}
         </p>
       </DetailSection>
 
@@ -873,8 +911,8 @@ function EmptyState() {
 function LoadingState() {
   return (
     <>
-      <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, index) => (
+      <section className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+        {Array.from({ length: 7 }).map((_, index) => (
           <div
             key={index}
             className="min-h-[128px] animate-pulse rounded-[var(--r-lg)] border border-[var(--ink-200)] bg-white p-4 shadow-[var(--shadow-sm)]"

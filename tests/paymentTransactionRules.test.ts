@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   calculatePaymentTransactionsKpis,
   calculatePendingAmountAtReception,
+  isPendingPaymentAttemptStatus,
   sumApprovedGrossByReservation,
 } from "../lib/paymentTransactionRules";
 
@@ -11,7 +12,7 @@ describe("payment transaction calculations", () => {
     expect(calculatePendingAmountAtReception(120000, 30000)).toBe(90000);
   });
 
-  test("approved payments add to gross, net and deductions totals", () => {
+  test("approved payments add to gross, net, deductions and reception balance totals", () => {
     expect(
       calculatePaymentTransactionsKpis([
         {
@@ -32,18 +33,20 @@ describe("payment transaction calculations", () => {
       netReceivedAmount: 27297.8,
       pendingReceptionAmount: 90000,
       transactionCount: 1,
+      approvedPaymentCount: 1,
+      pendingAttemptCount: 0,
       depositCount: 1,
       fullPaymentCount: 0,
       missingFinancialBreakdownCount: 0,
     });
   });
 
-  test("rejected payments do not add to money totals", () => {
+  test("created payments do not add to financial totals or reception balance", () => {
     expect(
       calculatePaymentTransactionsKpis([
         {
           reservationId: "reservation-1",
-          status: "rejected",
+          status: "created",
           type: "deposit",
           amount: 30000,
           grossAmount: 30000,
@@ -54,13 +57,71 @@ describe("payment transaction calculations", () => {
       grossCollectedAmount: 0,
       gatewayDeductionsAmount: 0,
       netReceivedAmount: 0,
-      pendingReceptionAmount: 120000,
+      pendingReceptionAmount: 0,
       transactionCount: 1,
+      approvedPaymentCount: 0,
+      pendingAttemptCount: 1,
       depositCount: 1,
     });
   });
 
-  test("multiple payments on one reservation do not duplicate pending amount in KPIs", () => {
+  test("pending payments do not add to financial totals or reception balance", () => {
+    expect(
+      calculatePaymentTransactionsKpis([
+        {
+          reservationId: "reservation-1",
+          status: "pending",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalReservationAmount: 120000,
+        },
+      ]),
+    ).toMatchObject({
+      grossCollectedAmount: 0,
+      gatewayDeductionsAmount: 0,
+      netReceivedAmount: 0,
+      pendingReceptionAmount: 0,
+      transactionCount: 1,
+      approvedPaymentCount: 0,
+      pendingAttemptCount: 1,
+      depositCount: 1,
+    });
+  });
+
+  test("rejected and failed payments do not add to financial totals or reception balance", () => {
+    expect(
+      calculatePaymentTransactionsKpis([
+        {
+          reservationId: "reservation-1",
+          status: "rejected",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalReservationAmount: 120000,
+        },
+        {
+          reservationId: "reservation-2",
+          status: "failed",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalReservationAmount: 120000,
+        },
+      ]),
+    ).toMatchObject({
+      grossCollectedAmount: 0,
+      gatewayDeductionsAmount: 0,
+      netReceivedAmount: 0,
+      pendingReceptionAmount: 0,
+      transactionCount: 2,
+      approvedPaymentCount: 0,
+      pendingAttemptCount: 0,
+      depositCount: 2,
+    });
+  });
+
+  test("multiple approved payments on one reservation do not duplicate pending amount in KPIs", () => {
     const payments = [
       {
         reservationId: "reservation-1",
@@ -72,7 +133,7 @@ describe("payment transaction calculations", () => {
       },
       {
         reservationId: "reservation-1",
-        status: "pending" as const,
+        status: "approved" as const,
         type: "deposit" as const,
         amount: 10000,
         grossAmount: 10000,
@@ -81,13 +142,15 @@ describe("payment transaction calculations", () => {
     ];
 
     expect(calculatePaymentTransactionsKpis(payments)).toMatchObject({
-      pendingReceptionAmount: 90000,
+      pendingReceptionAmount: 80000,
       transactionCount: 2,
-      grossCollectedAmount: 30000,
+      approvedPaymentCount: 2,
+      pendingAttemptCount: 0,
+      grossCollectedAmount: 40000,
     });
   });
 
-  test("pending calculations can use approved payments outside the current filtered rows", () => {
+  test("pending calculations use approved totals outside the current filtered rows without counting non-approved rows", () => {
     const allApproved = sumApprovedGrossByReservation([
       {
         reservationId: "reservation-1",
@@ -114,8 +177,65 @@ describe("payment transaction calculations", () => {
         allApproved,
       ),
     ).toMatchObject({
-      pendingReceptionAmount: 90000,
+      pendingReceptionAmount: 0,
       grossCollectedAmount: 0,
+      approvedPaymentCount: 0,
+    });
+  });
+
+  test("pending attempt status only includes created and pending", () => {
+    expect(isPendingPaymentAttemptStatus("created")).toBe(true);
+    expect(isPendingPaymentAttemptStatus("pending")).toBe(true);
+    expect(isPendingPaymentAttemptStatus("approved")).toBe(false);
+    expect(isPendingPaymentAttemptStatus("rejected")).toBe(false);
+    expect(isPendingPaymentAttemptStatus("failed")).toBe(false);
+    expect(isPendingPaymentAttemptStatus("cancelled")).toBe(false);
+    expect(isPendingPaymentAttemptStatus("refunded")).toBe(false);
+    expect(isPendingPaymentAttemptStatus("superseded")).toBe(false);
+  });
+
+  test("two approved payments and one created attempt match the payments KPI scenario", () => {
+    expect(
+      calculatePaymentTransactionsKpis([
+        {
+          reservationId: "reservation-1",
+          status: "approved",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalDeductionsAmount: 2702.2,
+          netReceivedAmount: 27297.8,
+          financialSnapshotStatus: "complete",
+          totalReservationAmount: 60000,
+        },
+        {
+          reservationId: "reservation-2",
+          status: "approved",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalDeductionsAmount: 2702.2,
+          netReceivedAmount: 27297.8,
+          financialSnapshotStatus: "complete",
+          totalReservationAmount: 75000,
+        },
+        {
+          reservationId: "reservation-3",
+          status: "created",
+          type: "deposit",
+          amount: 30000,
+          grossAmount: 30000,
+          totalReservationAmount: 60000,
+        },
+      ]),
+    ).toMatchObject({
+      grossCollectedAmount: 60000,
+      gatewayDeductionsAmount: 5404.4,
+      netReceivedAmount: 54595.6,
+      pendingReceptionAmount: 75000,
+      approvedPaymentCount: 2,
+      pendingAttemptCount: 1,
+      transactionCount: 3,
     });
   });
 });
