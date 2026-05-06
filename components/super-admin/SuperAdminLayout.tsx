@@ -47,7 +47,7 @@ export function SuperAdminLayout({ children }: { children: React.ReactNode }) {
             <button
               className="btn btn-ghost"
               onClick={() => {
-                void signOut().then(() => router.replace("/super-admin/login"));
+                void signOut();
               }}
             >
               <LogOut size={16} />

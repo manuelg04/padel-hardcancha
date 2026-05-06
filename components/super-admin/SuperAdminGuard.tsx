@@ -41,7 +41,7 @@ export function SuperAdminGuard({ children }: { children: React.ReactNode }) {
           <button
             className="btn btn-primary mt-5"
             onClick={() =>
-              void signOut().then(() => router.replace("/super-admin/login"))
+              void signOut()
             }
           >
             Salir

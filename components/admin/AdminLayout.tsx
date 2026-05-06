@@ -64,7 +64,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           </p>
           <button
             className="btn btn-primary mt-5"
-            onClick={() => void signOut().then(() => router.replace("/admin/login"))}
+            onClick={() => void signOut()}
           >
             Salir
           </button>
@@ -128,9 +128,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
         </div>
         <button
           className="mt-3 flex items-center gap-2 rounded-[var(--r-md)] px-3 py-2 text-sm font-bold text-white/65 hover:bg-white/5 hover:text-white"
-          onClick={() => {
-            void signOut().then(() => router.replace("/admin/login"));
-          }}
+          onClick={() => void signOut()}
         >
           <LogOut size={16} />
           Salir
