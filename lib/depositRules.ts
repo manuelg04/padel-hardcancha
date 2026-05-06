@@ -1,4 +1,3 @@
-export type DepositType = "percentage" | "fixed";
 export type DepositMode = "optional";
 export type DepositStatus = "none" | "pending" | "paid" | "failed" | "refunded";
 export type PaymentOptionSelected =
@@ -18,7 +17,7 @@ export type ReservationPaymentStatus =
 export type ClubDepositSettings = {
   onlineDepositsEnabled?: boolean;
   depositMode?: DepositMode;
-  depositType?: DepositType;
+  depositType?: "percentage" | "fixed";
   depositPercentage?: number;
   depositFixedAmount?: number | null;
   depositMinAmount?: number;
@@ -96,15 +95,6 @@ export type MembershipDepositEstimate = {
 
 export const DEFAULT_DEPOSIT_SETTINGS = {
   onlineDepositsEnabled: false,
-  depositMode: "optional" as const,
-  depositType: "percentage" as const,
-  depositPercentage: 25,
-  depositFixedAmount: null,
-  depositMinAmount: 30000,
-  depositMaxAmount: 60000,
-  depositRoundingAmount: 5000,
-  depositApplyAfterMembershipDiscounts: true,
-  allowPayAtClub: true,
 };
 
 export function normalizeDepositSettings(settings: ClubDepositSettings) {
@@ -115,37 +105,6 @@ export function normalizeDepositSettings(settings: ClubDepositSettings) {
 
   return {
     onlineDepositsEnabled: Boolean(merged.onlineDepositsEnabled),
-    depositMode: "optional" as const,
-    depositType:
-      merged.depositType === "fixed"
-        ? ("fixed" as const)
-        : ("percentage" as const),
-    depositPercentage: finiteOrDefault(
-      merged.depositPercentage,
-      DEFAULT_DEPOSIT_SETTINGS.depositPercentage,
-    ),
-    depositFixedAmount:
-      merged.depositFixedAmount === null || merged.depositFixedAmount === undefined
-        ? null
-        : finiteOrDefault(merged.depositFixedAmount, 0),
-    depositMinAmount: Math.max(
-      0,
-      finiteOrDefault(merged.depositMinAmount, DEFAULT_DEPOSIT_SETTINGS.depositMinAmount),
-    ),
-    depositMaxAmount: Math.max(
-      0,
-      finiteOrDefault(merged.depositMaxAmount, DEFAULT_DEPOSIT_SETTINGS.depositMaxAmount),
-    ),
-    depositRoundingAmount: Math.max(
-      1,
-      finiteOrDefault(
-        merged.depositRoundingAmount,
-        DEFAULT_DEPOSIT_SETTINGS.depositRoundingAmount,
-      ),
-    ),
-    depositApplyAfterMembershipDiscounts:
-      merged.depositApplyAfterMembershipDiscounts !== false,
-    allowPayAtClub: merged.allowPayAtClub !== false,
   };
 }
 
@@ -153,32 +112,28 @@ export function calculateSuggestedDeposit({
   baseReservationTotal,
   estimatedMembershipDiscount,
   playerHasDepositWaiver,
-  clubDepositSettings,
 }: DepositCalculationInput): DepositCalculationResult {
-  const settings = normalizeDepositSettings(clubDepositSettings);
-  const discount = settings.depositApplyAfterMembershipDiscounts
-    ? estimatedMembershipDiscount
-    : 0;
-  const estimatedPayableTotal = clampMoney(baseReservationTotal - discount);
+  const estimatedPayableTotal = clampMoney(
+    baseReservationTotal - estimatedMembershipDiscount,
+  );
 
   if (estimatedPayableTotal <= 0 || playerHasDepositWaiver) {
     return { estimatedPayableTotal, depositAmount: 0 };
   }
 
-  const rawDeposit =
-    settings.depositType === "percentage"
-      ? estimatedPayableTotal * (settings.depositPercentage / 100)
-      : settings.depositFixedAmount ?? 0;
-  const roundedDeposit = roundToNearest(rawDeposit, settings.depositRoundingAmount);
-  const cappedMinMax = Math.min(
-    Math.max(roundedDeposit, settings.depositMinAmount),
-    settings.depositMaxAmount,
-  );
-
   return {
     estimatedPayableTotal,
-    depositAmount: Math.min(clampMoney(cappedMinMax), estimatedPayableTotal),
+    depositAmount: calculateOnlineDepositAmount(estimatedPayableTotal),
   };
+}
+
+export function calculateOnlineDepositAmount(totalReservationAmount: number) {
+  const total = clampMoney(totalReservationAmount);
+  if (total <= 0) return 0;
+
+  const depositAmount = Math.max(Math.round(total * 0.25), 1);
+
+  return Math.min(depositAmount, total);
 }
 
 export function estimateMembershipForDeposit({
@@ -293,18 +248,9 @@ export function calculateFinalBalanceDue(finalTotal: number, depositPaidAmount: 
   return Math.max(clampMoney(finalTotal) - clampMoney(depositPaidAmount), 0);
 }
 
-function finiteOrDefault(value: number | null | undefined, fallback: number) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
 function clampMoney(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(Math.round(value), 0);
-}
-
-function roundToNearest(value: number, nearest: number) {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.round(value / nearest) * nearest;
 }
 
 function estimateMemberDiscount(

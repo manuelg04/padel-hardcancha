@@ -35,15 +35,6 @@ import { AdminLayout } from "./AdminLayout";
 type OnlineDepositStatus = {
   clubId: string;
   onlineDepositsEnabled: boolean;
-  depositMode: "optional";
-  depositType: "percentage" | "fixed";
-  depositPercentage: number;
-  depositFixedAmount: number | null;
-  depositMinAmount: number;
-  depositMaxAmount: number;
-  depositRoundingAmount: number;
-  depositApplyAfterMembershipDiscounts: boolean;
-  allowPayAtClub: boolean;
   mercadoPagoConnected: boolean;
   mercadoPagoConnectionStatus: string;
   connectionSource: "manual" | "oauth" | null;
@@ -178,23 +169,6 @@ function OnlineDepositsForm({
   const [onlineDepositsEnabled, setOnlineDepositsEnabled] = useState(
     status.onlineDepositsEnabled,
   );
-  const [depositType, setDepositType] = useState(status.depositType);
-  const [depositPercentage, setDepositPercentage] = useState(
-    status.depositPercentage,
-  );
-  const [depositFixedAmount, setDepositFixedAmount] = useState(
-    status.depositFixedAmount?.toString() ?? "",
-  );
-  const [depositMinAmount, setDepositMinAmount] = useState(status.depositMinAmount);
-  const [depositMaxAmount, setDepositMaxAmount] = useState(status.depositMaxAmount);
-  const [depositRoundingAmount, setDepositRoundingAmount] = useState(
-    status.depositRoundingAmount,
-  );
-  const [
-    depositApplyAfterMembershipDiscounts,
-    setDepositApplyAfterMembershipDiscounts,
-  ] = useState(status.depositApplyAfterMembershipDiscounts);
-  const [allowPayAtClub, setAllowPayAtClub] = useState(status.allowPayAtClub);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -249,15 +223,6 @@ function OnlineDepositsForm({
     try {
       await updateSettings({
         onlineDepositsEnabled,
-        depositType,
-        depositPercentage: Number(depositPercentage),
-        depositFixedAmount:
-          depositFixedAmount.trim() === "" ? null : Number(depositFixedAmount),
-        depositMinAmount: Number(depositMinAmount),
-        depositMaxAmount: Number(depositMaxAmount),
-        depositRoundingAmount: Number(depositRoundingAmount),
-        depositApplyAfterMembershipDiscounts,
-        allowPayAtClub,
       });
       setMessage("Anticipos actualizados.");
     } catch (caught) {
@@ -276,7 +241,7 @@ function OnlineDepositsForm({
             <h2 className="text-xl font-black">Mercado Pago</h2>
           </div>
           <p className="text-sm text-[var(--ink-500)]">
-            Pagos online del club y anticipos opcionales.
+            Pagos online del club y anticipos de reserva.
           </p>
         </div>
         <span className={`pill ${connectionBadgeClassName}`}>
@@ -425,7 +390,8 @@ function OnlineDepositsForm({
         <div>
           <h3 className="font-black">Anticipos online</h3>
           <p className="text-sm text-[var(--ink-500)]">
-            Reglas del anticipo opcional que puede pagar el jugador al reservar.
+            El anticipo se cobra como una cuarta parte del valor de la reserva,
+            despues de beneficios de membresia.
           </p>
         </div>
         <label className="flex items-start gap-3 rounded-[var(--r-md)] border border-[var(--ink-200)] bg-[var(--ink-50)] p-3 text-sm font-bold">
@@ -436,74 +402,11 @@ function OnlineDepositsForm({
             onChange={(event) => setOnlineDepositsEnabled(event.target.checked)}
           />
           <span>
-            Activar anticipos opcionales
+            Activar anticipos online
             <span className="block text-xs font-medium text-[var(--ink-500)]">
-              El jugador siempre puede reservar y pagar en el club.
+              Requiere Mercado Pago conectado y cobra el anticipo antes de confirmar.
             </span>
           </span>
-        </label>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="field">
-            <label>Tipo</label>
-            <select
-              value={depositType}
-              onChange={(event) =>
-                setDepositType(event.target.value as "percentage" | "fixed")
-              }
-            >
-              <option value="percentage">Porcentaje</option>
-              <option value="fixed">Fijo</option>
-            </select>
-          </div>
-          {depositType === "percentage" ? (
-            <NumberInput
-              label="Porcentaje"
-              suffix="%"
-              value={depositPercentage}
-              onChange={setDepositPercentage}
-            />
-          ) : (
-            <PriceInput
-              label="Valor fijo"
-              value={Number(depositFixedAmount || 0)}
-              onChange={(value) => setDepositFixedAmount(String(value))}
-            />
-          )}
-          <PriceInput
-            label="Minimo"
-            value={depositMinAmount}
-            onChange={setDepositMinAmount}
-          />
-          <PriceInput
-            label="Maximo"
-            value={depositMaxAmount}
-            onChange={setDepositMaxAmount}
-          />
-          <PriceInput
-            label="Redondeo"
-            value={depositRoundingAmount}
-            onChange={setDepositRoundingAmount}
-          />
-        </div>
-
-        <label className="flex items-center gap-2 text-sm font-bold">
-          <input
-            type="checkbox"
-            checked={depositApplyAfterMembershipDiscounts}
-            onChange={(event) =>
-              setDepositApplyAfterMembershipDiscounts(event.target.checked)
-            }
-          />
-          Calcular despues de beneficios de membresia
-        </label>
-        <label className="flex items-center gap-2 text-sm font-bold">
-          <input
-            type="checkbox"
-            checked={allowPayAtClub}
-            onChange={(event) => setAllowPayAtClub(event.target.checked)}
-          />
-          Permitir reservar sin anticipo
         </label>
 
         <button className="btn btn-primary" type="submit">
@@ -700,35 +603,6 @@ function PriceInput({
         onChange={(event) => onChange(Number(event.target.value))}
       />
       <span className="text-xs text-[var(--ink-500)]">{formatCOP(value || 0)}</span>
-    </div>
-  );
-}
-
-function NumberInput({
-  label,
-  suffix,
-  value,
-  onChange,
-}: {
-  label: string;
-  suffix?: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <div className="field">
-      <label>{label}</label>
-      <input
-        type="number"
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-      {suffix ? (
-        <span className="text-xs text-[var(--ink-500)]">
-          {value || 0}
-          {suffix}
-        </span>
-      ) : null}
     </div>
   );
 }

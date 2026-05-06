@@ -1,3 +1,5 @@
+import { calculateOnlineDepositAmount } from "./depositRules";
+
 export const PUBLIC_RESERVATION_PAYMENT_TYPES = [
   "deposit",
   "full_payment",
@@ -46,9 +48,8 @@ export function calculateReservationDepositAmount(
   totalReservationAmount: number,
 ) {
   const total = normalizeReservationTotal(totalReservationAmount);
-  const depositAmount = Math.max(Math.round(total * 0.25), 1);
 
-  return Math.min(depositAmount, total);
+  return calculateOnlineDepositAmount(total);
 }
 
 export function calculateReservationPaymentBreakdown(

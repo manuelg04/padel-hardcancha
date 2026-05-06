@@ -38,35 +38,42 @@ function calculate(input: {
 }
 
 describe("deposit calculation", () => {
-  test("calculates the expected percentage deposits", () => {
+  test("calculates fixed quarter deposits", () => {
     expect(calculate({ total: 120000 })).toBe(30000);
-    expect(calculate({ total: 150000 })).toBe(40000);
-    expect(calculate({ total: 90000 })).toBe(30000);
-    expect(calculate({ total: 300000 })).toBe(60000);
+    expect(calculate({ total: 130000 })).toBe(32500);
+    expect(calculate({ total: 150000 })).toBe(37500);
+    expect(calculate({ total: 90000 })).toBe(22500);
+    expect(calculate({ total: 300000 })).toBe(75000);
   });
 
   test("applies membership discounts before calculating the deposit", () => {
-    expect(calculate({ total: 120000, discount: 30000 })).toBe(30000);
+    expect(calculate({ total: 120000, discount: 30000 })).toBe(22500);
   });
 
-  test("caps the deposit when the payable total is below the minimum", () => {
-    expect(calculate({ total: 20000 })).toBe(20000);
+  test("does not apply a minimum deposit", () => {
+    expect(calculate({ total: 20000 })).toBe(5000);
   });
 
   test("returns zero when the player has a deposit waiver", () => {
     expect(calculate({ total: 120000, waiver: true })).toBe(0);
   });
 
-  test("supports fixed deposits and rounding", () => {
+  test("ignores legacy configurable deposit settings", () => {
     expect(
       calculate({
-        total: 120000,
+        total: 130000,
+        discount: 30000,
         settings: {
           depositType: "fixed",
           depositFixedAmount: 37500,
+          depositPercentage: 10,
+          depositMinAmount: 50000,
+          depositMaxAmount: 60000,
+          depositRoundingAmount: 5000,
+          depositApplyAfterMembershipDiscounts: false,
         },
       }),
-    ).toBe(40000);
+    ).toBe(25000);
   });
 });
 

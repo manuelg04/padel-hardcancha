@@ -59,7 +59,6 @@ import {
 } from "./bookings";
 import { requireAuthUser, requireClubAccess, getCurrentUserClub } from "./access";
 import {
-  depositTypeValidator,
   financialSnapshotStatusValidator,
   reservationPaymentProviderValidator,
   reservationPaymentStatusValidator,
@@ -84,7 +83,6 @@ const depositPreviewValidator = v.object({
   clubId: v.id("clubs"),
   onlineDepositsEnabled: v.boolean(),
   mercadoPagoConnected: v.boolean(),
-  allowPayAtClub: v.boolean(),
   baseReservationTotal: v.number(),
   estimatedMembershipDiscount: v.number(),
   estimatedTotal: v.number(),
@@ -147,15 +145,6 @@ const nullableMercadoPagoConnectionSourceValidator = v.union(
 const connectionStatusValidator = v.object({
   clubId: v.id("clubs"),
   onlineDepositsEnabled: v.boolean(),
-  depositMode: v.literal("optional"),
-  depositType: depositTypeValidator,
-  depositPercentage: v.number(),
-  depositFixedAmount: v.union(v.number(), v.null()),
-  depositMinAmount: v.number(),
-  depositMaxAmount: v.number(),
-  depositRoundingAmount: v.number(),
-  depositApplyAfterMembershipDiscounts: v.boolean(),
-  allowPayAtClub: v.boolean(),
   mercadoPagoConnected: v.boolean(),
   mercadoPagoConnectionStatus: v.string(),
   connectionSource: nullableMercadoPagoConnectionSourceValidator,
@@ -537,7 +526,6 @@ export const getOnlineDepositPreview = query({
       clubId: club._id,
       onlineDepositsEnabled,
       mercadoPagoConnected,
-      allowPayAtClub: settings.allowPayAtClub,
       baseReservationTotal,
       estimatedMembershipDiscount: estimate.estimatedMembershipDiscount,
       estimatedTotal: estimate.estimatedTotal,
@@ -568,7 +556,6 @@ export const getClubMercadoPagoStatus = query({
 
     return {
       clubId: club._id,
-      ...settings,
       onlineDepositsEnabled: settings.onlineDepositsEnabled,
       mercadoPagoConnected,
       mercadoPagoConnectionStatus:
@@ -582,14 +569,6 @@ export const getClubMercadoPagoStatus = query({
 export const updateClubDepositSettings = mutation({
   args: {
     onlineDepositsEnabled: v.boolean(),
-    depositType: depositTypeValidator,
-    depositPercentage: v.number(),
-    depositFixedAmount: v.optional(v.union(v.number(), v.null())),
-    depositMinAmount: v.number(),
-    depositMaxAmount: v.number(),
-    depositRoundingAmount: v.number(),
-    depositApplyAfterMembershipDiscounts: v.boolean(),
-    allowPayAtClub: v.boolean(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -604,32 +583,8 @@ export const updateClubDepositSettings = mutation({
       });
     }
 
-    if (args.depositMinAmount < 0 || args.depositMaxAmount < args.depositMinAmount) {
-      throw new ConvexError({
-        code: "VALIDATION_ERROR",
-        message: "Revisa los montos minimo y maximo del anticipo.",
-      });
-    }
-
-    if (args.depositRoundingAmount <= 0) {
-      throw new ConvexError({
-        code: "VALIDATION_ERROR",
-        message: "El redondeo debe ser mayor a cero.",
-      });
-    }
-
     await ctx.db.patch(club._id, {
       onlineDepositsEnabled: args.onlineDepositsEnabled,
-      depositMode: "optional",
-      depositType: args.depositType,
-      depositPercentage: args.depositPercentage,
-      depositFixedAmount: args.depositFixedAmount ?? null,
-      depositMinAmount: args.depositMinAmount,
-      depositMaxAmount: args.depositMaxAmount,
-      depositRoundingAmount: args.depositRoundingAmount,
-      depositApplyAfterMembershipDiscounts:
-        args.depositApplyAfterMembershipDiscounts,
-      allowPayAtClub: args.allowPayAtClub,
       updatedAt: Date.now(),
     });
 

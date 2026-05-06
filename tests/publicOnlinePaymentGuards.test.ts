@@ -45,6 +45,26 @@ describe("public online payment guards", () => {
     expect(source).toContain("amount: estimate.estimatedTotal");
   });
 
+  test("club config does not expose legacy deposit tuning controls", () => {
+    const source = readProjectFile("components/admin/ConfigClient.tsx");
+
+    expect(source).not.toMatch(/Reglas del anticipo opcional/i);
+    expect(source).not.toMatch(/Porcentaje/i);
+    expect(source).not.toMatch(/Valor fijo/i);
+    expect(source).not.toMatch(/Minimo/i);
+    expect(source).not.toMatch(/Maximo/i);
+    expect(source).not.toMatch(/Redondeo/i);
+    expect(source).not.toMatch(/Calcular despues de beneficios de membresia/i);
+    expect(source).not.toMatch(/Permitir reservar sin anticipo/i);
+    expect(source).not.toContain("depositType");
+    expect(source).not.toContain("depositPercentage");
+    expect(source).not.toContain("depositFixedAmount");
+    expect(source).not.toContain("depositMinAmount");
+    expect(source).not.toContain("depositMaxAmount");
+    expect(source).not.toContain("depositRoundingAmount");
+    expect(source).not.toContain("allowPayAtClub");
+  });
+
   test("the old public booking mutation rejects attempts to skip online payment", () => {
     const source = readProjectFile("convex/bookings.ts");
 
