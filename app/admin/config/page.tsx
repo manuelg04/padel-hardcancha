@@ -2,11 +2,25 @@ import { Suspense } from "react";
 
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { ConfigClient } from "@/components/admin/ConfigClient";
+import { getMercadoPagoOAuthResultMessage } from "@/lib/mercadoPagoConfigUiRules";
 
-export default function ConfigPage() {
+type ConfigPageProps = {
+  searchParams?: Promise<{
+    mp_oauth?: string;
+    reason?: string;
+  }>;
+};
+
+export default async function ConfigPage({ searchParams }: ConfigPageProps) {
+  const params = await searchParams;
+  const oauthResultMessage = getMercadoPagoOAuthResultMessage({
+    result: params?.mp_oauth,
+    reason: params?.reason,
+  });
+
   return (
     <Suspense fallback={<ConfigPageFallback />}>
-      <ConfigClient />
+      <ConfigClient oauthResultMessage={oauthResultMessage} />
     </Suspense>
   );
 }

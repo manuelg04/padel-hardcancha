@@ -39,11 +39,23 @@ describe("Mercado Pago token encryption", () => {
     expect(encrypted).not.toContain("APP_USR-secret-token");
   });
 
+  test("accepts the legacy production encryption key name", async () => {
+    vi.stubEnv("MERCADOPAGO_TOKEN_ENCRYPTION_KEY", "");
+    vi.stubEnv("MP_TOKEN_ENCRYPTION_KEY", validKey);
+
+    const encrypted = await encryptSecretString("APP_USR-secret-token");
+
+    await expect(decryptSecretString(encrypted)).resolves.toBe(
+      "APP_USR-secret-token",
+    );
+  });
+
   test("fails when the encryption key is missing", async () => {
     vi.stubEnv("MERCADOPAGO_TOKEN_ENCRYPTION_KEY", "");
+    vi.stubEnv("MP_TOKEN_ENCRYPTION_KEY", "");
 
     await expect(encryptSecretString("APP_USR-secret-token")).rejects.toThrow(
-      "MERCADOPAGO_TOKEN_ENCRYPTION_KEY is required.",
+      "MERCADOPAGO_TOKEN_ENCRYPTION_KEY or MP_TOKEN_ENCRYPTION_KEY is required.",
     );
   });
 

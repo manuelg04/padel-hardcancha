@@ -115,9 +115,9 @@ export function getMercadoPagoOAuthCallbackFailure(params: URLSearchParams):
 
 export function readMercadoPagoOAuthStartEnv(env: Record<string, string | undefined>) {
   const clientId = env.MERCADOPAGO_CLIENT_ID?.trim();
-  const redirectUri = env.MERCADOPAGO_OAUTH_REDIRECT_URI?.trim();
+  const redirectUri = getMercadoPagoOAuthRedirectUri(env);
 
-  if (!clientId || !redirectUri || !isValidAbsoluteUrl(redirectUri)) {
+  if (!clientId || !redirectUri) {
     return {
       ok: false as const,
       reason: "missing_env" as const,
@@ -134,9 +134,9 @@ export function readMercadoPagoOAuthStartEnv(env: Record<string, string | undefi
 export function readMercadoPagoOAuthCallbackEnv(
   env: Record<string, string | undefined>,
 ) {
-  const redirectUri = env.MERCADOPAGO_OAUTH_REDIRECT_URI?.trim();
+  const redirectUri = getMercadoPagoOAuthRedirectUri(env);
 
-  if (!redirectUri || !isValidAbsoluteUrl(redirectUri)) {
+  if (!redirectUri) {
     return {
       ok: false as const,
       reason: "missing_env" as const,
@@ -153,6 +153,20 @@ export function mapMercadoPagoOAuthStateErrorReason(code?: string) {
   if (code === "OAUTH_STATE_EXPIRED") return "expired_state" as const;
   if (code === "OAUTH_STATE_NOT_PENDING") return "used_state" as const;
   return "invalid_state" as const;
+}
+
+function getMercadoPagoOAuthRedirectUri(env: Record<string, string | undefined>) {
+  const explicitRedirectUri = env.MERCADOPAGO_OAUTH_REDIRECT_URI?.trim();
+
+  if (explicitRedirectUri && isValidAbsoluteUrl(explicitRedirectUri)) {
+    return explicitRedirectUri;
+  }
+
+  const appBaseUrl = env.APP_BASE_URL?.trim();
+
+  if (!appBaseUrl || !isValidAbsoluteUrl(appBaseUrl)) return null;
+
+  return new URL("/api/mercadopago/oauth/callback", appBaseUrl).toString();
 }
 
 function isValidAbsoluteUrl(value: string) {

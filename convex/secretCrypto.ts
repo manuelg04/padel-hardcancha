@@ -1,4 +1,5 @@
 const ENCRYPTION_KEY_ENV = "MERCADOPAGO_TOKEN_ENCRYPTION_KEY";
+const LEGACY_ENCRYPTION_KEY_ENV = "MP_TOKEN_ENCRYPTION_KEY";
 const SECRET_FORMAT_VERSION = "v1";
 const AES_GCM_IV_BYTES = 12;
 const BASE64_ALPHABET =
@@ -56,10 +57,14 @@ async function importEncryptionKey() {
 }
 
 function getEncryptionKeyBytes() {
-  const raw = process.env[ENCRYPTION_KEY_ENV]?.trim();
+  const raw =
+    process.env[ENCRYPTION_KEY_ENV]?.trim() ||
+    process.env[LEGACY_ENCRYPTION_KEY_ENV]?.trim();
 
   if (!raw) {
-    throw new Error(`${ENCRYPTION_KEY_ENV} is required.`);
+    throw new Error(
+      `${ENCRYPTION_KEY_ENV} or ${LEGACY_ENCRYPTION_KEY_ENV} is required.`,
+    );
   }
 
   try {

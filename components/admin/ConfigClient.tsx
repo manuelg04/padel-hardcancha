@@ -12,8 +12,8 @@ import {
   Unplug,
 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
-import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
@@ -27,7 +27,6 @@ import {
   buildMercadoPagoConfigConnectionView,
   buildMercadoPagoConnectionMetadata,
   formatMercadoPagoConnectionStatusLabel,
-  getMercadoPagoOAuthResultMessage,
   type MercadoPagoOAuthResultMessage,
 } from "@/lib/mercadoPagoConfigUiRules";
 import { normalizeMercadoPagoConnectionInput } from "@/lib/mercadoPagoConnectionRules";
@@ -63,17 +62,23 @@ const dayLabels = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const MERCADO_PAGO_OAUTH_START_URL =
   "/api/mercadopago/oauth/start?redirectAfterSuccess=/admin/config";
 
-export function ConfigClient() {
-  const searchParams = useSearchParams();
-  const oauthResultMessage = getMercadoPagoOAuthResultMessage({
-    result: searchParams.get("mp_oauth"),
-    reason: searchParams.get("reason"),
-  });
+export function ConfigClient({
+  oauthResultMessage,
+}: {
+  oauthResultMessage: MercadoPagoOAuthResultMessage | null;
+}) {
+  const router = useRouter();
   const club = useQuery(api.clubs.getCurrentUserClubForAdmin, {});
   const courts = useQuery(
     api.courts.listCourtsByClub,
     club ? { clubId: club._id, includeInactive: true } : "skip",
   );
+
+  useEffect(() => {
+    if (oauthResultMessage) {
+      router.replace("/admin/config", { scroll: false });
+    }
+  }, [oauthResultMessage, router]);
 
   return (
     <AdminLayout>

@@ -5,6 +5,7 @@ import {
   buildMercadoPagoOAuthResultRedirect,
   getMercadoPagoOAuthCallbackFailure,
   normalizeMercadoPagoOAuthRedirect,
+  readMercadoPagoOAuthCallbackEnv,
   readMercadoPagoOAuthStartEnv,
 } from "../lib/mercadoPagoOAuthRouteRules";
 
@@ -142,6 +143,29 @@ describe("Mercado Pago OAuth env handling", () => {
     ).toEqual({
       ok: true,
       clientId: "123456789",
+      redirectUri:
+        "https://padel-hardcancha.vercel.app/api/mercadopago/oauth/callback",
+    });
+  });
+
+  test("derives OAuth callback URL from the app base URL", () => {
+    expect(
+      readMercadoPagoOAuthStartEnv({
+        MERCADOPAGO_CLIENT_ID: "123456789",
+        APP_BASE_URL: "https://padel-hardcancha.vercel.app",
+      }),
+    ).toEqual({
+      ok: true,
+      clientId: "123456789",
+      redirectUri:
+        "https://padel-hardcancha.vercel.app/api/mercadopago/oauth/callback",
+    });
+    expect(
+      readMercadoPagoOAuthCallbackEnv({
+        APP_BASE_URL: "https://padel-hardcancha.vercel.app",
+      }),
+    ).toEqual({
+      ok: true,
       redirectUri:
         "https://padel-hardcancha.vercel.app/api/mercadopago/oauth/callback",
     });
